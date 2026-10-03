@@ -1,19 +1,86 @@
+export type ProviderCapability =
+  | "image"
+  | "video"
+  | "voice";
+
+export type ProviderJobStatus =
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "failed";
+
+export type ProviderDescriptor = {
+  id: string;
+  label: string;
+  capabilities: ProviderCapability[];
+  configured: boolean;
+  models: Partial<Record<ProviderCapability, string[]>>;
+};
+
+export type ProviderArtifact = {
+  url: string;
+  mimeType: string;
+  provider: string;
+  model: string;
+  metadata?: Record<string, string | number | boolean | null>;
+};
+
 export type ProviderJob<TInput, TOutput> = {
   provider: string;
   model: string;
+  capability: ProviderCapability;
   input: TInput;
   estimatedCost?: number;
   run(): Promise<TOutput>;
 };
 
+export type ImageGenerateInput = {
+  prompt: string;
+  aspectRatio?: string;
+};
+
+export type ImageEditInput = {
+  prompt: string;
+  imageUrl: string;
+  aspectRatio?: string;
+};
+
+export type VideoGenerateInput = {
+  prompt: string;
+  imageUrl?: string;
+  durationSeconds?: number;
+  aspectRatio?: string;
+};
+
+export type VoiceSynthesizeInput = {
+  text: string;
+  voice?: string;
+  language?: string;
+};
+
 export interface ImageProvider {
-  generate(input: { prompt: string; aspectRatio?: string }): ProviderJob<unknown, { url: string }>;
+  generate(input: ImageGenerateInput): ProviderJob<ImageGenerateInput, ProviderArtifact>;
+  edit?(input: ImageEditInput): ProviderJob<ImageEditInput, ProviderArtifact>;
 }
 
 export interface VideoProvider {
-  generate(input: { prompt: string; imageUrl?: string; durationSeconds?: number }): ProviderJob<unknown, { url: string }>;
+  generate(input: VideoGenerateInput): ProviderJob<VideoGenerateInput, ProviderArtifact>;
 }
 
 export interface VoiceProvider {
-  synthesize(input: { text: string; voice?: string; language?: string }): ProviderJob<unknown, { url: string }>;
+  synthesize(input: VoiceSynthesizeInput): ProviderJob<VoiceSynthesizeInput, ProviderArtifact>;
 }
+
+export type ProviderAdapter = {
+  descriptor: ProviderDescriptor;
+  image?: ImageProvider;
+  video?: VideoProvider;
+  voice?: VoiceProvider;
+};
+
+export type ProviderSelection = Record<ProviderCapability, string>;
+
+export type ProviderDirectorySnapshot = {
+  providers: ProviderDescriptor[];
+  selections: ProviderSelection;
+};

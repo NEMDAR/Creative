@@ -8,6 +8,7 @@ import { listPhaseTwoSnapshots, loadBrandKit, loadPhaseOneDraft, loadPhaseTwoDra
 import { buildSequentialTimeline, createEmptyTimeline, deleteTimelineClip, duplicateTimelineClip, formatTimelineTime, getMaxTransitionDuration, getNextTimelineClip, getTransitionVisualState, isCrossfadeEligible, moveTimelineClip, removeTimelineRange, resolveTimelineTime, setTimelineClipTransition, setTimelinePlayhead, splitTimelineClip, timelineTimeForClip, trimTimelineClip, updateTimelineClipTransform, type ClipFitMode, type TimelineClip, type TimelineState, type TransitionType } from "../lib/editor/timeline";
 import { instantiateMarketingTemplate, MARKETING_TEMPLATES, type MarketingTemplateId } from "../lib/editor/templates";
 import { compileEditorCommand, type EditorCommandPlan } from "../lib/editor/command-bar";
+import type { ProviderCapability, ProviderDirectorySnapshot } from "../lib/providers/contracts";
 import type { ServerRenderManifest } from "../lib/render/server-types";
 
 const RATIOS: Record<RatioKey, { w: number; h: number }> = {
@@ -364,6 +365,9 @@ export default function PhaseOneEditor() {
   const [commandInput, setCommandInput] = useState("");
   const [commandPlan, setCommandPlan] = useState<EditorCommandPlan | null>(null);
   const [commandError, setCommandError] = useState<string | null>(null);
+  const [providerDirectory, setProviderDirectory] = useState<ProviderDirectorySnapshot | null>(null);
+  const [providerState, setProviderState] = useState<"loading" | "ready" | "saving" | "error">("loading");
+  const [providerError, setProviderError] = useState<string | null>(null);
   const [captionLanguage, setCaptionLanguage] = useState<CaptionLanguage>("auto");
   const [captionState, setCaptionState] = useState<"idle" | "generating" | "ready" | "error">("idle");
   const [captionError, setCaptionError] = useState<string | null>(null);
@@ -408,6 +412,39 @@ export default function PhaseOneEditor() {
   const lastAutoSnapshotAtRef = useRef(0);
   const undoStack = useRef<CreatorProject[]>([]);
   const redoStack = useRef<CreatorProject[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        setProviderState("loading");
+        const response = await fetch("/api/providers");
+        const payload = (await response.json()) as ProviderDirectorySnapshot & {
+          error?: string;
+        };
+        if (!response.ok) {
+          throw new Error(payload.error || "Unable to load AI providers.");
+        }
+        if (!cancelled) {
+          setProviderDirectory(payload);
+          setProviderState("ready");
+          setProviderError(null);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setProviderState("error");
+          setProviderError(
+            error instanceof Error ? error.message : "Unable to load AI providers."
+          );
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!videoRef.current) return;
@@ -940,6 +977,34 @@ export default function PhaseOneEditor() {
         setSaveState("error");
       }
     })();
+  }
+
+  async function selectAIProvider(
+    capability: ProviderCapability,
+    providerId: string
+  ) {
+    try {
+      setProviderState("saving");
+      const response = await fetch("/api/providers", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ capability, providerId }),
+      });
+      const payload = (await response.json()) as ProviderDirectorySnapshot & {
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(payload.error || "Unable to change AI provider.");
+      }
+      setProviderDirectory(payload);
+      setProviderState("ready");
+      setProviderError(null);
+    } catch (error) {
+      setProviderState("error");
+      setProviderError(
+        error instanceof Error ? error.message : "Unable to change AI provider."
+      );
+    }
   }
 
   function previewEditorCommand() {
@@ -2801,7 +2866,7 @@ export default function PhaseOneEditor() {
         <div>
           <span className="eyebrow">NEMDAR</span>
           <strong>Creative Studio</strong>
-          <span className="phaseChip">P3 AI Command Bar</span>
+          <span className="phaseChip">P4 Provider Router</span>
         </div>
         <div className="topActions">
           <button className="ghost" onClick={undo}>Undo</button>
@@ -2922,6 +2987,54 @@ export default function PhaseOneEditor() {
           <button className="toolButton" onClick={addText}>+ Text</button>
           <label className="toolButton fileButton">+ Logo / image<input type="file" accept="image/*" onChange={addLogo} hidden /></label>
           <label className="toolButton fileButton">+ Music / audio<input type="file" accept="audio/*" onChange={onAudioUpload} hidden /></label>
+
+          <h2>AI Providers</h2>
+          <div className="providerPanel" data-testid="provider-panel">
+            <div className="providerPanelHeader">
+              <strong>Provider Router</strong>
+              <span className={`providerState ${providerState}`}>
+                {providerState === "loading"
+                  ? "Loading…"
+                  : providerState === "saving"
+                    ? "Switching…"
+                    : providerState === "error"
+                      ? "Error"
+                      : "Ready"}
+              </span>
+            </div>
+            {(["image", "video", "voice"] as ProviderCapability[]).map((capability) => (
+              <label key={capability}>
+                {capability[0].toUpperCase() + capability.slice(1)} provider
+                <select
+                  aria-label={`${capability[0].toUpperCase() + capability.slice(1)} provider`}
+                  value={providerDirectory?.selections[capability] ?? ""}
+                  disabled={!providerDirectory || providerState === "loading" || providerState === "saving"}
+                  onChange={(e) => void selectAIProvider(capability, e.target.value)}
+                >
+                  {(providerDirectory?.providers ?? [])
+                    .filter(
+                      (provider) =>
+                        provider.configured &&
+                        provider.capabilities.includes(capability)
+                    )
+                    .map((provider) => (
+                      <option key={provider.id} value={provider.id}>
+                        {provider.label}
+                      </option>
+                    ))}
+                </select>
+                {providerDirectory?.selections[capability] && (
+                  <small>
+                    {(providerDirectory.providers.find(
+                      (provider) =>
+                        provider.id === providerDirectory.selections[capability]
+                    )?.models[capability] ?? []).join(", ")}
+                  </small>
+                )}
+              </label>
+            ))}
+            {providerError && <p className="providerError">{providerError}</p>}
+          </div>
 
           <h2>Brand Kit</h2>
           <div className="brandKitPanel" data-testid="brand-kit">

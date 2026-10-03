@@ -222,3 +222,15 @@ h2 { font-size:12px; text-transform:uppercase; letter-spacing:.1em; color:var(--
 .commandPlan ol { margin:0; padding-left:18px; color:var(--text); font-size:10px; }
 .commandError { margin:8px 0 0; color:#ff98a2; font-size:10px; }
 @media (max-width: 900px) { .commandPlan { grid-template-columns:1fr; } .commandBarInput { grid-template-columns:auto 1fr; } .commandBarInput button { grid-column:1 / -1; } }
+
+.providerPanel { display:flex; flex-direction:column; gap:9px; padding:10px; border:1px solid rgba(22,139,241,.24); border-radius:12px; background:rgba(22,139,241,.045); }
+.providerPanelHeader { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.providerPanelHeader strong { font-size:11px; }
+.providerState { font-size:9px; color:var(--muted); }
+.providerState.loading, .providerState.saving { color:#f5d06f; }
+.providerState.ready { color:#8ad9aa; }
+.providerState.error { color:#ff98a2; }
+.providerPanel label { display:flex; flex-direction:column; gap:5px; }
+.providerPanel label > small { color:var(--muted); font-size:9px; line-height:1.35; }
+.providerPanel select { width:100%; }
+.providerError { margin:0; color:#ff98a2; font-size:10px; line-height:1.4; }

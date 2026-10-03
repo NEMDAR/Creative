@@ -1129,3 +1129,44 @@ test("P3 AI command bar rejects unsupported edits before mutation", async ({ pag
   await expect(page.getByTestId("command-plan")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "9:16", exact: true })).toHaveClass(/active/);
 });
+
+test("P4 Provider Router swaps capabilities independently and persists runtime selection", async ({ page }) => {
+  await page.goto("/");
+
+  const panel = page.getByTestId("provider-panel");
+  await expect(panel).toBeVisible();
+
+  const imageProvider = page.getByLabel("Image provider");
+  const videoProvider = page.getByLabel("Video provider");
+  const voiceProvider = page.getByLabel("Voice provider");
+
+  await expect(imageProvider).toBeEnabled({ timeout: 5_000 });
+  await expect(videoProvider).toBeEnabled();
+  await expect(voiceProvider).toBeEnabled();
+
+  await expect(imageProvider).toHaveValue("mock-fast");
+  await expect(videoProvider).toHaveValue("mock-fast");
+  await expect(voiceProvider).toHaveValue("mock-fast");
+
+  await expect(imageProvider.locator("option")).toHaveCount(2);
+  await imageProvider.selectOption("mock-quality");
+
+  await expect(imageProvider).toHaveValue("mock-quality");
+  await expect(videoProvider).toHaveValue("mock-fast");
+  await expect(voiceProvider).toHaveValue("mock-fast");
+  await expect(panel).toContainText("mock-image-quality");
+
+  await page.reload();
+  await expect(page.getByLabel("Image provider")).toHaveValue("mock-quality", { timeout: 5_000 });
+  await expect(page.getByLabel("Video provider")).toHaveValue("mock-fast");
+  await expect(page.getByLabel("Voice provider")).toHaveValue("mock-fast");
+
+  const rejected = await page.request.post("/api/providers", {
+    data: { capability: "image", providerId: "missing-provider" },
+  });
+  expect(rejected.status()).toBe(400);
+  await expect.poll(async () => (await rejected.json()).error).toContain("Unknown provider");
+
+  await page.getByLabel("Image provider").selectOption("mock-fast");
+  await expect(page.getByLabel("Image provider")).toHaveValue("mock-fast");
+});
