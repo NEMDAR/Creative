@@ -3,7 +3,7 @@
 import { ChangeEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { CreatorProject, Overlay, RatioKey, TextOverlay } from "../lib/editor/types";
 import { loadPhaseOneDraft, savePhaseOneDraft } from "../lib/editor/storage";
-import { buildSingleClipTimeline, createEmptyTimeline, formatTimelineTime, setTimelinePlayhead, timelineToSourceTime } from "../lib/editor/timeline";
+import { buildSequentialTimeline, createEmptyTimeline, formatTimelineTime, resolveTimelineTime, setTimelinePlayhead, timelineTimeForSource } from "../lib/editor/timeline";
 
 const RATIOS: Record<RatioKey, { w: number; h: number }> = {
   "9:16": { w: 9, h: 16 },
@@ -23,17 +23,20 @@ const initialProject: CreatorProject = {
   overlays: [],
 };
 
-type MediaState = { kind: "video" | "image"; url: string; name: string; type: string; blob: Blob } | null;
+type MediaItem = { id: string; kind: "video" | "image"; url: string; name: string; type: string; blob: Blob; duration: number };
+type MediaState = MediaItem | null;
 
 export default function PhaseOneEditor() {
   const [project, setProject] = useState<CreatorProject>(initialProject);
   const [media, setMedia] = useState<MediaState>(null);
+  const [mediaItems, setMediaItems] = useState<MediaItem[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [duration, setDuration] = useState(0);
   const [timeline, setTimeline] = useState(createEmptyTimeline);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const mediaObjectUrls = useRef<string[]>([]);
+  const pendingSeekRef = useRef<{ assetId: string; sourceTime: number } | null>(null);
   const isExportingRef = useRef(false);
   const [exportState, setExportState] = useState<"idle" | "rendering" | "done" | "error">("idle");
   const [exportProgress, setExportProgress] = useState(0);
@@ -57,38 +60,39 @@ export default function PhaseOneEditor() {
   }, [project.trimStart, project.trimEnd, duration, media]);
 
   useEffect(() => {
-    if (!media) {
+    if (mediaItems.length === 0) {
       setTimeline(createEmptyTimeline());
       return;
     }
 
-    if (media.kind === "image") {
-      setTimeline((current) =>
-        buildSingleClipTimeline({
-          assetName: media.name,
-          kind: "image",
-          duration: 5,
-          playhead: current.playhead,
-        })
-      );
-      return;
-    }
+    const singleSource = mediaItems.length === 1;
+    const inputs = mediaItems.map((item) => {
+      if (singleSource && item.kind === "video") {
+        const end = project.trimEnd ?? item.duration;
+        return {
+          assetId: item.id,
+          assetName: item.name,
+          kind: item.kind,
+          sourceStart: project.trimStart,
+          sourceDuration: item.duration,
+          duration: Math.max(0, end - project.trimStart),
+        };
+      }
 
-    const end = project.trimEnd ?? duration;
-    const clipDuration = Math.max(0, end - project.trimStart);
-    if (!duration || clipDuration <= 0) return;
+      return {
+        assetId: item.id,
+        assetName: item.name,
+        kind: item.kind,
+        sourceStart: 0,
+        sourceDuration: item.kind === "video" ? item.duration : null,
+        duration: item.duration,
+      };
+    });
 
     setTimeline((current) =>
-      buildSingleClipTimeline({
-        assetName: media.name,
-        kind: "video",
-        sourceStart: project.trimStart,
-        sourceDuration: duration,
-        duration: clipDuration,
-        playhead: current.playhead,
-      })
+      buildSequentialTimeline(inputs, current.playhead)
     );
-  }, [media, duration, project.trimStart, project.trimEnd]);
+  }, [mediaItems, project.trimStart, project.trimEnd]);
 
   const selected = useMemo(
     () => project.overlays.find((overlay) => overlay.id === selectedId) ?? null,
@@ -134,14 +138,85 @@ export default function PhaseOneEditor() {
     return url;
   }
 
-  function onMediaUpload(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    const kind = file.type.startsWith("video/") ? "video" : file.type.startsWith("image/") ? "image" : null;
-    if (!kind) return alert("Please select a video or image file.");
-    setMedia({ kind, url: createObjectUrl(file), name: file.name, type: file.type, blob: file });
-    setDuration(0);
-    replaceProject((p) => ({ ...p, trimStart: 0, trimEnd: null }));
+  async function onMediaUpload(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []);
+    if (files.length === 0) return;
+
+    const nextItems: MediaItem[] = [];
+    for (const file of files) {
+      const kind = file.type.startsWith("video/")
+        ? "video"
+        : file.type.startsWith("image/")
+          ? "image"
+          : null;
+      if (!kind) continue;
+
+      const url = createObjectUrl(file);
+      const itemDuration = await probeMediaDuration(url, kind);
+      nextItems.push({
+        id: crypto.randomUUID(),
+        kind,
+        url,
+        name: file.name,
+        type: file.type,
+        blob: file,
+        duration: itemDuration,
+      });
+    }
+
+    if (nextItems.length === 0) {
+      alert("Please select supported video or image files.");
+      return;
+    }
+
+    setMediaItems((current) => [...current, ...nextItems]);
+
+    if (!media) {
+      const first = nextItems[0];
+      setMedia(first);
+      setDuration(first.kind === "video" ? first.duration : 0);
+      replaceProject((p) => ({ ...p, trimStart: 0, trimEnd: null }));
+    }
+
+    event.target.value = "";
+  }
+
+  function probeMediaDuration(url: string, kind: "video" | "image") {
+    if (kind === "image") return Promise.resolve(5);
+
+    return new Promise<number>((resolve) => {
+      const probe = document.createElement("video");
+      probe.preload = "metadata";
+      probe.src = url;
+      probe.onloadedmetadata = () => {
+        const value = Number.isFinite(probe.duration) && probe.duration > 0 ? probe.duration : 5;
+        resolve(value);
+      };
+      probe.onerror = () => resolve(5);
+    });
+  }
+
+  function selectMediaItem(item: MediaItem) {
+    setMedia(item);
+    setDuration(item.kind === "video" ? item.duration : 0);
+    const clip = timeline.tracks[0]?.clips.find((entry) => entry.assetId === item.id);
+    if (clip) {
+      setTimeline((current) => setTimelinePlayhead(current, clip.timelineStart));
+      if (item.kind === "video") {
+        pendingSeekRef.current = { assetId: item.id, sourceTime: clip.sourceStart };
+      }
+    }
+  }
+
+  function moveMediaItem(id: string, direction: -1 | 1) {
+    setMediaItems((current) => {
+      const index = current.findIndex((item) => item.id === id);
+      const target = index + direction;
+      if (index < 0 || target < 0 || target >= current.length) return current;
+      const next = [...current];
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
   }
 
   function addText() {
@@ -204,13 +279,25 @@ export default function PhaseOneEditor() {
     const rect = event.currentTarget.getBoundingClientRect();
     const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
     const timelineTime = timeline.duration * ratio;
+    const resolved = resolveTimelineTime(timeline, timelineTime);
     setTimeline((current) => setTimelinePlayhead(current, timelineTime));
 
-    if (media?.kind === "video" && videoRef.current) {
-      const sourceTime = timelineToSourceTime(timeline, timelineTime);
-      if (sourceTime !== null) {
-        videoRef.current.currentTime = sourceTime;
-      }
+    if (!resolved) return;
+    const item = mediaItems.find((candidate) => candidate.id === resolved.clip.assetId);
+    if (!item) return;
+
+    if (media?.id !== item.id) {
+      pendingSeekRef.current =
+        item.kind === "video"
+          ? { assetId: item.id, sourceTime: resolved.sourceTime }
+          : null;
+      setMedia(item);
+      setDuration(item.kind === "video" ? item.duration : 0);
+      return;
+    }
+
+    if (item.kind === "video" && videoRef.current) {
+      videoRef.current.currentTime = resolved.sourceTime;
     }
   }
 
@@ -256,7 +343,7 @@ export default function PhaseOneEditor() {
           : null
       );
       localStorage.setItem("nemdar-creative-studio-phase1", JSON.stringify(project));
-      alert("Project and source media saved locally in this browser.");
+      alert(mediaItems.length > 1 ? "Selected clip saved locally. Full multi-clip autosave arrives in P2 snapshots." : "Project and source media saved locally in this browser.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to save the local draft.";
       alert(message);
@@ -269,15 +356,20 @@ export default function PhaseOneEditor() {
       if (draft) {
         replaceProject(() => ({ ...initialProject, ...draft.project }));
         if (draft.media) {
-          setMedia({
+          const restored: MediaItem = {
+            id: crypto.randomUUID(),
             kind: draft.media.kind,
             name: draft.media.name,
             type: draft.media.type,
             blob: draft.media.blob,
             url: createObjectUrl(draft.media.blob),
-          });
+            duration: draft.media.kind === "image" ? 5 : 0,
+          };
+          setMedia(restored);
+          setMediaItems([restored]);
         } else {
           setMedia(null);
+          setMediaItems([]);
         }
         setSelectedId(null);
         return;
@@ -418,8 +510,9 @@ export default function PhaseOneEditor() {
     const video = videoRef.current;
     if (!video || media?.kind !== "video") return;
 
-    const start = Math.max(0, project.trimStart);
-    const end = Math.min(project.trimEnd ?? duration, duration);
+    const singleSource = mediaItems.length <= 1;
+    const start = singleSource ? Math.max(0, project.trimStart) : 0;
+    const end = singleSource ? Math.min(project.trimEnd ?? duration, duration) : duration;
     if (!Number.isFinite(end) || end <= start) {
       setExportState("error");
       setExportError("Trim end must be after trim start.");
@@ -647,11 +740,42 @@ export default function PhaseOneEditor() {
         <aside className="panel leftPanel">
           <h2>Assets</h2>
           <label className="uploadBox">
-            <span>Upload video or image</span>
-            <small>Local preview — no upload to a server yet</small>
-            <input type="file" accept="video/*,image/*" onChange={onMediaUpload} hidden />
+            <span>Upload videos or images</span>
+            <small>Add one or multiple clips to Visual 1</small>
+            <input type="file" accept="video/*,image/*" multiple onChange={onMediaUpload} hidden />
           </label>
-          {media && <div className="assetCard"><span>{media.kind}</span><strong title={media.name}>{media.name}</strong></div>}
+          <div className="assetList">
+            {mediaItems.map((item, index) => (
+              <div
+                className={media?.id === item.id ? "assetCard active" : "assetCard"}
+                key={item.id}
+                onClick={() => selectMediaItem(item)}
+              >
+                <span>{item.kind}</span>
+                <strong title={item.name}>{item.name}</strong>
+                <div className="assetActions">
+                  <button
+                    type="button"
+                    aria-label={`Move ${item.name} earlier`}
+                    disabled={index === 0}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      moveMediaItem(item.id, -1);
+                    }}
+                  >↑</button>
+                  <button
+                    type="button"
+                    aria-label={`Move ${item.name} later`}
+                    disabled={index === mediaItems.length - 1}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      moveMediaItem(item.id, 1);
+                    }}
+                  >↓</button>
+                </div>
+              </div>
+            ))}
+          </div>
 
           <h2>Elements</h2>
           <button className="toolButton" onClick={addText}>+ Text</button>
@@ -675,7 +799,7 @@ export default function PhaseOneEditor() {
           <div className="stageWrap">
             <div ref={stageRef} className="stage" style={{ aspectRatio: `${ratio.w}/${ratio.h}` }}>
               {!media && <div className="emptyStage"><b>Drop in your first creative</b><span>Video + text + logo + social ratio</span></div>}
-              {media?.kind === "video" && (
+              {mediaItems.length <= 1 && media?.kind === "video" && (
                 <video
                   ref={videoRef}
                   src={media.url}
@@ -683,25 +807,48 @@ export default function PhaseOneEditor() {
                   playsInline
                   muted={project.muted}
                   onLoadedMetadata={(e) => {
-                    const d = e.currentTarget.duration || 0;
+                    const d = e.currentTarget.duration || media.duration || 0;
                     setDuration(d);
-                    e.currentTarget.currentTime = project.trimStart;
-                    replaceProject((p) => ({ ...p, trimEnd: p.trimEnd ?? d }), false);
+                    setMediaItems((current) =>
+                      current.map((item) =>
+                        item.id === media.id ? { ...item, duration: d } : item
+                      )
+                    );
+
+                    const pending = pendingSeekRef.current;
+                    if (pending?.assetId === media.id) {
+                      e.currentTarget.currentTime = pending.sourceTime;
+                      pendingSeekRef.current = null;
+                    } else if (mediaItems.length <= 1) {
+                      e.currentTarget.currentTime = project.trimStart;
+                      replaceProject((p) => ({ ...p, trimEnd: p.trimEnd ?? d }), false);
+                    } else {
+                      e.currentTarget.currentTime = 0;
+                    }
                   }}
                   onPlay={(e) => {
-                    const end = project.trimEnd ?? duration;
-                    if (e.currentTarget.currentTime < project.trimStart || e.currentTarget.currentTime >= end) {
-                      e.currentTarget.currentTime = project.trimStart;
+                    const singleSource = mediaItems.length <= 1;
+                    const start = singleSource ? project.trimStart : 0;
+                    const end = singleSource ? (project.trimEnd ?? duration) : duration;
+                    if (e.currentTarget.currentTime < start || e.currentTarget.currentTime >= end) {
+                      e.currentTarget.currentTime = start;
                     }
                   }}
                   onTimeUpdate={(e) => {
-                    const end = project.trimEnd ?? duration;
-                    const timelineTime = Math.max(0, e.currentTarget.currentTime - project.trimStart);
-                    setTimeline((current) => setTimelinePlayhead(current, timelineTime));
-                    if (!isExportingRef.current && end > project.trimStart && e.currentTarget.currentTime >= end) {
+                    const singleSource = mediaItems.length <= 1;
+                    const start = singleSource ? project.trimStart : 0;
+                    const end = singleSource ? (project.trimEnd ?? duration) : duration;
+                    const timelineTime = timelineTimeForSource(timeline, media.id, e.currentTarget.currentTime);
+                    if (timelineTime !== null) {
+                      setTimeline((current) => setTimelinePlayhead(current, timelineTime));
+                    }
+                    if (!isExportingRef.current && end > start && e.currentTarget.currentTime >= end) {
                       e.currentTarget.pause();
-                      e.currentTarget.currentTime = project.trimStart;
-                      setTimeline((current) => setTimelinePlayhead(current, 0));
+                      e.currentTarget.currentTime = start;
+                      const resetTime = timelineTimeForSource(timeline, media.id, start);
+                      if (resetTime !== null) {
+                        setTimeline((current) => setTimelinePlayhead(current, resetTime));
+                      }
                     }
                   }}
                   className="mediaLayer"
@@ -764,7 +911,20 @@ export default function PhaseOneEditor() {
                 onClick={scrubTimeline}
               >
                 {timeline.tracks[0]?.clips.map((clip) => (
-                  <div className="clip timelineClip" key={clip.id}>
+                  <div
+                    className={media?.id === clip.assetId ? "clip timelineClip active" : "clip timelineClip"}
+                    key={clip.id}
+                    data-testid="timeline-clip"
+                    style={{
+                      left: `${timeline.duration > 0 ? (clip.timelineStart / timeline.duration) * 100 : 0}%`,
+                      width: `${timeline.duration > 0 ? (clip.duration / timeline.duration) * 100 : 0}%`,
+                    }}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      const item = mediaItems.find((candidate) => candidate.id === clip.assetId);
+                      if (item) selectMediaItem(item);
+                    }}
+                  >
                     <strong>{clip.assetName}</strong>
                     <span>{formatTimelineTime(clip.duration)}</span>
                   </div>
@@ -828,8 +988,8 @@ export default function PhaseOneEditor() {
           {selected && <button className="danger" onClick={deleteSelected}>Delete selected</button>}
 
           <div className="notice">
-            <b>Phase 1 local mode</b>
-            <span>Projects and source media persist in IndexedDB. Video export is rendered locally as WebM in Chromium; a server MP4 render path remains a later production-hardening task.</span>
+            <b>P2 multi-clip foundation</b>
+            <span>Visual 1 now accepts ordered multiple clips. Per-clip split/trim and durable multi-clip snapshots are handled by the next P2 cards.</span>
           </div>
         </aside>
       </section>
