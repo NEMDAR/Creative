@@ -1,7 +1,7 @@
 "use client";
 
 import { ChangeEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { captionCueAtTime, normalizeCaptionTrack, type CaptionCue, type CaptionLanguage, type CaptionTrack } from "../lib/editor/captions";
+import { CAPTION_STYLE_PRESETS, captionCueAtTime, cloneCaptionStylePreset, normalizeCaptionStyle, normalizeCaptionTrack, type CaptionCue, type CaptionEmphasis, type CaptionLanguage, type CaptionPosition, type CaptionPresetId, type CaptionStyleConfig, type CaptionTrack } from "../lib/editor/captions";
 import type { CreatorProject, Overlay, RatioKey, TextOverlay } from "../lib/editor/types";
 import { listPhaseTwoSnapshots, loadPhaseOneDraft, loadPhaseTwoDraft, loadPhaseTwoSnapshot, savePhaseTwoDraft, savePhaseTwoSnapshot, type HydratedPhaseTwoState, type PhaseTwoSaveInput, type PhaseTwoSnapshotSummary } from "../lib/editor/storage";
 import { buildSequentialTimeline, createEmptyTimeline, deleteTimelineClip, duplicateTimelineClip, formatTimelineTime, getMaxTransitionDuration, getNextTimelineClip, getTransitionVisualState, isCrossfadeEligible, moveTimelineClip, resolveTimelineTime, setTimelineClipTransition, setTimelinePlayhead, splitTimelineClip, timelineTimeForClip, trimTimelineClip, updateTimelineClipTransform, type ClipFitMode, type TimelineClip, type TransitionType } from "../lib/editor/timeline";
@@ -73,6 +73,55 @@ function loadImageElement(src: string) {
     image.onerror = () => reject(new Error("Unable to load overlay image."));
     image.src = src;
   });
+}
+
+function hexToRgba(hex: string, opacity: number) {
+  const normalized = hex.replace("#", "").trim();
+  const value =
+    normalized.length === 3
+      ? normalized
+          .split("")
+          .map((char) => char + char)
+          .join("")
+      : normalized.padEnd(6, "0").slice(0, 6);
+  const numeric = Number.parseInt(value, 16);
+  const red = (numeric >> 16) & 255;
+  const green = (numeric >> 8) & 255;
+  const blue = numeric & 255;
+  return `rgba(${red}, ${green}, ${blue}, ${Math.max(0, Math.min(1, opacity))})`;
+}
+
+function captionPreviewStyle(style: CaptionStyleConfig): CSSProperties {
+  const position: CSSProperties =
+    style.position === "top"
+      ? { top: `${style.safeZone}%`, bottom: "auto" }
+      : style.position === "center"
+        ? { top: "50%", bottom: "auto", transform: "translate(-50%, -50%)" }
+        : { bottom: `${style.safeZone}%`, top: "auto" };
+
+  return {
+    ...position,
+    left: "50%",
+    right: "auto",
+    width: "max-content",
+    maxWidth: `${style.maxWidth}%`,
+    transform:
+      style.position === "center"
+        ? "translate(-50%, -50%)"
+        : "translateX(-50%)",
+    fontSize: `${style.fontSize}px`,
+    fontWeight: style.fontWeight,
+    color: style.textColor,
+    backgroundColor: hexToRgba(style.backgroundColor, style.backgroundOpacity),
+    textAlign: "center",
+    lineHeight: 1.25,
+    textShadow: style.shadow ? "0 2px 8px rgba(0,0,0,.72)" : "none",
+    boxShadow:
+      style.emphasis === "highlight"
+        ? "0 0 0 2px rgba(255,255,255,.24)"
+        : "none",
+    letterSpacing: style.emphasis === "bold" ? ".01em" : "normal",
+  };
 }
 
 async function rasterizeOverlayAsset(
@@ -152,6 +201,7 @@ export default function PhaseOneEditor() {
   const [timeline, setTimeline] = useState(createEmptyTimeline);
   const [audioTrack, setAudioTrack] = useState<AudioTrackItem | null>(null);
   const [captions, setCaptions] = useState<CaptionTrack | null>(null);
+  const [captionStyle, setCaptionStyle] = useState<CaptionStyleConfig>(() => cloneCaptionStylePreset("clean"));
   const [captionLanguage, setCaptionLanguage] = useState<CaptionLanguage>("auto");
   const [captionState, setCaptionState] = useState<"idle" | "generating" | "ready" | "error">("idle");
   const [captionError, setCaptionError] = useState<string | null>(null);
@@ -1023,6 +1073,7 @@ export default function PhaseOneEditor() {
         ? (({ url: _url, ...track }) => track)(audioTrack)
         : null,
       captions,
+      captionStyle,
       timelineZoom,
       snapEnabled,
       selectedClipId,
@@ -1052,6 +1103,7 @@ export default function PhaseOneEditor() {
     setTimeline(state.timeline);
     setAudioTrack(restoredAudio);
     setCaptions(state.captions ?? null);
+    setCaptionStyle(normalizeCaptionStyle(state.captionStyle));
     setCaptionLanguage(state.captions?.requestedLanguage ?? "auto");
     setCaptionState(state.captions?.cues.length ? "ready" : "idle");
     setSelectedCaptionId(state.captions?.cues[0]?.id ?? null);
@@ -1163,6 +1215,7 @@ export default function PhaseOneEditor() {
       timeline: state.timeline,
       audioTrack: state.audioTrack,
       captions: state.captions ?? null,
+      captionStyle: normalizeCaptionStyle(state.captionStyle),
       timelineZoom: state.timelineZoom,
       snapEnabled: state.snapEnabled,
       selectedClipId: state.selectedClipId,
@@ -1247,6 +1300,7 @@ export default function PhaseOneEditor() {
     timeline.tracks,
     audioTrack,
     captions,
+    captionStyle,
     timelineZoom,
     snapEnabled,
   ]);
@@ -2100,7 +2154,9 @@ export default function PhaseOneEditor() {
                 <div
                   className="captionPreview"
                   data-testid="caption-preview"
+                  data-preset={captionStyle.presetId}
                   dir={activeCaption.language === "ar" ? "rtl" : "ltr"}
+                  style={captionPreviewStyle(captionStyle)}
                 >
                   {activeCaption.text}
                 </div>
@@ -2404,6 +2460,130 @@ export default function PhaseOneEditor() {
               >
                 {captionState === "generating" ? "Generating…" : captions ? "Regenerate captions" : "Generate captions"}
               </button>
+            </div>
+
+            <div className="captionStylePanel" data-testid="caption-style-panel">
+              <div className="captionPresetGrid">
+                {(Object.keys(CAPTION_STYLE_PRESETS) as CaptionPresetId[]).map((presetId) => (
+                  <button
+                    type="button"
+                    key={presetId}
+                    className={captionStyle.presetId === presetId ? "captionPreset active" : "captionPreset"}
+                    aria-label={`Caption preset ${presetId}`}
+                    onClick={() => setCaptionStyle(cloneCaptionStylePreset(presetId))}
+                  >
+                    {presetId}
+                  </button>
+                ))}
+              </div>
+              <div className="captionStyleGrid">
+                <label>
+                  Position
+                  <select
+                    aria-label="Caption position"
+                    value={captionStyle.position}
+                    onChange={(e) =>
+                      setCaptionStyle((current) =>
+                        normalizeCaptionStyle({
+                          ...current,
+                          position: e.target.value as CaptionPosition,
+                        })
+                      )
+                    }
+                  >
+                    <option value="top">Top</option>
+                    <option value="center">Center</option>
+                    <option value="bottom">Bottom</option>
+                  </select>
+                </label>
+                <label>
+                  Emphasis
+                  <select
+                    aria-label="Caption emphasis"
+                    value={captionStyle.emphasis}
+                    onChange={(e) =>
+                      setCaptionStyle((current) =>
+                        normalizeCaptionStyle({
+                          ...current,
+                          emphasis: e.target.value as CaptionEmphasis,
+                        })
+                      )
+                    }
+                  >
+                    <option value="none">None</option>
+                    <option value="bold">Bold</option>
+                    <option value="highlight">Highlight</option>
+                  </select>
+                </label>
+                <label>
+                  Font size
+                  <input
+                    aria-label="Caption font size"
+                    type="number"
+                    min={14}
+                    max={64}
+                    value={captionStyle.fontSize}
+                    onChange={(e) =>
+                      setCaptionStyle((current) =>
+                        normalizeCaptionStyle({
+                          ...current,
+                          fontSize: Number(e.target.value),
+                        })
+                      )
+                    }
+                  />
+                </label>
+                <label>
+                  Safe zone %
+                  <input
+                    aria-label="Caption safe zone"
+                    type="number"
+                    min={0}
+                    max={25}
+                    value={captionStyle.safeZone}
+                    onChange={(e) =>
+                      setCaptionStyle((current) =>
+                        normalizeCaptionStyle({
+                          ...current,
+                          safeZone: Number(e.target.value),
+                        })
+                      )
+                    }
+                  />
+                </label>
+                <label>
+                  Max width %
+                  <input
+                    aria-label="Caption max width"
+                    type="number"
+                    min={40}
+                    max={96}
+                    value={captionStyle.maxWidth}
+                    onChange={(e) =>
+                      setCaptionStyle((current) =>
+                        normalizeCaptionStyle({
+                          ...current,
+                          maxWidth: Number(e.target.value),
+                        })
+                      )
+                    }
+                  />
+                </label>
+                <label className="check">
+                  <input
+                    aria-label="Caption shadow"
+                    type="checkbox"
+                    checked={captionStyle.shadow}
+                    onChange={(e) =>
+                      setCaptionStyle((current) => ({
+                        ...current,
+                        shadow: e.target.checked,
+                      }))
+                    }
+                  />
+                  Shadow
+                </label>
+              </div>
             </div>
             {captionError && <p className="captionError">{captionError}</p>}
             {captions && (

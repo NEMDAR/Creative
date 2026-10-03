@@ -707,3 +707,64 @@ test("P3 automatic Arabic captions generate edit preview and persist", async ({ 
   await expect(page.getByLabel("Caption text")).toHaveValue("نمدار كريتيف — كابتشن معدل");
   await expect(page.getByTestId("caption-preview")).toHaveText("نمدار كريتيف — كابتشن معدل");
 });
+
+test("P3 caption style presets control typography safe-zone and persist", async ({ page }) => {
+  await page.goto("/");
+
+  await page.locator('input[accept="video/*,image/*"]').setInputFiles({
+    name: "caption-style.png",
+    mimeType: "image/png",
+    buffer: PNG_1X1,
+  });
+
+  await page.locator('input[accept="audio/*"]').setInputFiles({
+    name: "caption-style.wav",
+    mimeType: "audio/wav",
+    buffer: createSilentWav(4),
+  });
+
+  await page.getByLabel("Caption language").selectOption("en");
+  await page.getByRole("button", { name: "Generate captions" }).click();
+
+  const preview = page.getByTestId("caption-preview");
+  await expect(preview).toBeVisible();
+
+  await page.getByRole("button", { name: "Caption preset bold" }).click();
+  await expect(preview).toHaveAttribute("data-preset", "bold");
+  await expect(preview).toHaveCSS("font-size", "32px");
+  await expect(preview).toHaveCSS("font-weight", "900");
+
+  await page.getByLabel("Caption position").selectOption("top");
+  await page.getByLabel("Caption emphasis").selectOption("highlight");
+  await page.getByLabel("Caption font size").fill("36");
+  await page.getByLabel("Caption safe zone").fill("12");
+  await page.getByLabel("Caption max width").fill("70");
+  await page.getByLabel("Caption shadow").uncheck();
+
+  await expect
+    .poll(() => preview.getAttribute("style"))
+    .toContain("font-size: 36px");
+  await expect
+    .poll(() => preview.getAttribute("style"))
+    .toContain("inset: 12% auto auto 50%");
+  await expect
+    .poll(() => preview.getAttribute("style"))
+    .toContain("max-width: 70%");
+  await expect(preview).toHaveCSS("text-shadow", "none");
+
+  const saveState = page.getByTestId("save-state");
+  const before = await saveState.getAttribute("data-saved-at");
+  await expect
+    .poll(() => saveState.getAttribute("data-saved-at"), { timeout: 5_000 })
+    .not.toBe(before);
+
+  await page.reload();
+
+  await expect(page.getByRole("button", { name: "Caption preset bold" })).toHaveClass(/active/);
+  await expect(page.getByLabel("Caption position")).toHaveValue("top");
+  await expect(page.getByLabel("Caption emphasis")).toHaveValue("highlight");
+  await expect(page.getByLabel("Caption font size")).toHaveValue("36");
+  await expect(page.getByLabel("Caption safe zone")).toHaveValue("12");
+  await expect(page.getByLabel("Caption max width")).toHaveValue("70");
+  await expect(page.getByLabel("Caption shadow")).not.toBeChecked();
+});
