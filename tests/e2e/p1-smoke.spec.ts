@@ -575,3 +575,85 @@ test("P2 durable server render queue exports a real MP4", async ({ page }) => {
 
   await expect(renderState).toContainText("Complete · 100%");
 });
+
+test("P2 representative long project stays responsive and renders MP4", async ({ page }) => {
+  test.setTimeout(180_000);
+  await page.goto("/");
+
+  const sourceInput = page.locator('input[accept="video/*,image/*"]');
+  await sourceInput.setInputFiles(
+    Array.from({ length: 8 }, (_, index) => ({
+      name: `long-${index + 1}.png`,
+      mimeType: "image/png",
+      buffer: PNG_1X1,
+    }))
+  );
+
+  const clips = page.getByTestId("timeline-clip");
+  await expect(clips).toHaveCount(8);
+  await expect(page.getByTestId("timeline-clock")).toHaveText("00:00.0");
+
+  // Exercise the image -> image crossfade path.
+  await page.getByLabel("Transition type").selectOption("crossfade");
+  await page.getByLabel("Transition duration").fill("0.5");
+  await expect(page.getByTestId("transition-badge").first()).toHaveText("XF");
+
+  // Add a timed marketing overlay.
+  await page.getByRole("button", { name: "+ Text" }).click();
+  await page.getByLabel("Text").fill("NEMDAR performance smoke");
+  await page.getByLabel("Overlay start").fill("2");
+  await page.getByLabel("Overlay end").fill("6");
+
+  // Add music so the final MP4 exercises the audio pipeline too.
+  const audioInput = page.locator('input[accept="audio/*"]');
+  await audioInput.setInputFiles({
+    name: "long-project-music.wav",
+    mimeType: "audio/wav",
+    buffer: createSilentWav(2),
+  });
+  await expect(page.getByTestId("audio-track-item")).toBeVisible();
+  await page.getByLabel("Audio start").fill("1");
+  await page.getByLabel("Audio gain").fill("0.5");
+  await page.getByLabel("Audio fade in").fill("0.2");
+  await page.getByLabel("Audio fade out").fill("0.3");
+
+  // Long-timeline interaction should remain practical.
+  const surface = page.getByTestId("timeline-surface");
+  await surface.scrollIntoViewIfNeeded();
+  const started = Date.now();
+  await surface.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    element.dispatchEvent(
+      new MouseEvent("click", {
+        bubbles: true,
+        clientX: rect.left + rect.width * 0.9,
+        clientY: rect.top + 1,
+      })
+    );
+  });
+  await expect(page.getByTestId("timeline-clock")).toHaveText("00:36.0");
+  expect(Date.now() - started).toBeLessThan(2_000);
+
+  const downloadPromise = page.waitForEvent("download", { timeout: 150_000 });
+  await page.getByTestId("export-mp4").click();
+
+  const renderState = page.getByTestId("server-render-state");
+  await expect(renderState).toBeVisible();
+
+  // Editing remains available while FFmpeg is running.
+  await page.getByLabel("Name").fill("Edited during render");
+  await expect(page.getByLabel("Name")).toHaveValue("Edited during render");
+
+  await expect(renderState).toContainText(/Complete|Failed/, { timeout: 150_000 });
+  const finalState = (await renderState.textContent()) ?? "";
+  if (finalState.includes("Failed")) {
+    throw new Error(`Long-project render failed: ${finalState}`);
+  }
+
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toMatch(/\.mp4$/);
+  const downloadedPath = await download.path();
+  if (!downloadedPath) throw new Error("Long-project MP4 path is unavailable.");
+  const info = await stat(downloadedPath);
+  expect(info.size).toBeGreaterThan(3_000);
+});
