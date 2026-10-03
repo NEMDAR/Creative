@@ -3,7 +3,7 @@
 import { ChangeEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { CreatorProject, Overlay, RatioKey, TextOverlay } from "../lib/editor/types";
 import { loadPhaseOneDraft, savePhaseOneDraft } from "../lib/editor/storage";
-import { buildSequentialTimeline, createEmptyTimeline, formatTimelineTime, resolveTimelineTime, setTimelinePlayhead, timelineTimeForSource } from "../lib/editor/timeline";
+import { buildSequentialTimeline, createEmptyTimeline, deleteTimelineClip, duplicateTimelineClip, formatTimelineTime, moveTimelineClip, resolveTimelineTime, setTimelinePlayhead, splitTimelineClip, timelineTimeForClip, trimTimelineClip, type TimelineClip } from "../lib/editor/timeline";
 
 const RATIOS: Record<RatioKey, { w: number; h: number }> = {
   "9:16": { w: 9, h: 16 },
@@ -31,6 +31,7 @@ export default function PhaseOneEditor() {
   const [media, setMedia] = useState<MediaState>(null);
   const [mediaItems, setMediaItems] = useState<MediaItem[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
   const [duration, setDuration] = useState(0);
   const [timeline, setTimeline] = useState(createEmptyTimeline);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -98,6 +99,17 @@ export default function PhaseOneEditor() {
     () => project.overlays.find((overlay) => overlay.id === selectedId) ?? null,
     [project.overlays, selectedId]
   );
+
+  const selectedClip = useMemo(
+    () => timeline.tracks[0]?.clips.find((clip) => clip.id === selectedClipId) ?? null,
+    [timeline, selectedClipId]
+  );
+
+  useEffect(() => {
+    const clips = timeline.tracks[0]?.clips ?? [];
+    if (selectedClipId && clips.some((clip) => clip.id === selectedClipId)) return;
+    setSelectedClipId(clips[0]?.id ?? null);
+  }, [timeline, selectedClipId]);
 
   function replaceProject(
     updater: (current: CreatorProject) => CreatorProject,
@@ -201,11 +213,72 @@ export default function PhaseOneEditor() {
     setDuration(item.kind === "video" ? item.duration : 0);
     const clip = timeline.tracks[0]?.clips.find((entry) => entry.assetId === item.id);
     if (clip) {
+      setSelectedClipId(clip.id);
       setTimeline((current) => setTimelinePlayhead(current, clip.timelineStart));
       if (item.kind === "video") {
         pendingSeekRef.current = { assetId: item.id, sourceTime: clip.sourceStart };
       }
     }
+  }
+
+  function selectTimelineClip(clip: TimelineClip) {
+    setSelectedClipId(clip.id);
+    setTimeline((current) => setTimelinePlayhead(current, clip.timelineStart));
+    const item = mediaItems.find((candidate) => candidate.id === clip.assetId);
+    if (!item) return;
+
+    setMedia(item);
+    setDuration(item.kind === "video" ? item.duration : 0);
+    if (item.kind === "video") {
+      pendingSeekRef.current = { assetId: item.id, sourceTime: clip.sourceStart };
+      if (media?.id === item.id && videoRef.current) {
+        videoRef.current.currentTime = clip.sourceStart;
+        pendingSeekRef.current = null;
+      }
+    }
+  }
+
+  function updateSelectedClipTrim(field: "sourceStart" | "duration", value: number) {
+    if (!selectedClip) return;
+    const sourceStart = field === "sourceStart" ? value : selectedClip.sourceStart;
+    const clipDuration = field === "duration" ? value : selectedClip.duration;
+    setTimeline((current) =>
+      trimTimelineClip(current, selectedClip.id, sourceStart, clipDuration)
+    );
+
+    if (field === "sourceStart" && media?.id === selectedClip.assetId && videoRef.current) {
+      videoRef.current.currentTime = Math.max(0, value);
+    }
+  }
+
+  function splitSelectedClip() {
+    if (!selectedClip) return;
+    const offset = timeline.playhead - selectedClip.timelineStart;
+    const rightId = `${selectedClip.id}-split-${crypto.randomUUID()}`;
+    const beforeCount = timeline.tracks[0]?.clips.length ?? 0;
+    const next = splitTimelineClip(timeline, selectedClip.id, offset, rightId);
+    const afterCount = next.tracks[0]?.clips.length ?? 0;
+    if (afterCount === beforeCount) return;
+    setTimeline(next);
+    setSelectedClipId(rightId);
+  }
+
+  function duplicateSelectedClip() {
+    if (!selectedClip) return;
+    const copyId = `${selectedClip.id}-copy-${crypto.randomUUID()}`;
+    setTimeline((current) => duplicateTimelineClip(current, selectedClip.id, copyId));
+    setSelectedClipId(copyId);
+  }
+
+  function deleteSelectedClip() {
+    if (!selectedClip) return;
+    setTimeline((current) => deleteTimelineClip(current, selectedClip.id));
+    setSelectedClipId(null);
+  }
+
+  function moveSelectedClip(direction: -1 | 1) {
+    if (!selectedClip) return;
+    setTimeline((current) => moveTimelineClip(current, selectedClip.id, direction));
   }
 
   function moveMediaItem(id: string, direction: -1 | 1) {
@@ -283,6 +356,7 @@ export default function PhaseOneEditor() {
     setTimeline((current) => setTimelinePlayhead(current, timelineTime));
 
     if (!resolved) return;
+    setSelectedClipId(resolved.clip.id);
     const item = mediaItems.find((candidate) => candidate.id === resolved.clip.assetId);
     if (!item) return;
 
@@ -511,8 +585,15 @@ export default function PhaseOneEditor() {
     if (!video || media?.kind !== "video") return;
 
     const singleSource = mediaItems.length <= 1;
-    const start = singleSource ? Math.max(0, project.trimStart) : 0;
-    const end = singleSource ? Math.min(project.trimEnd ?? duration, duration) : duration;
+    const activeClip =
+      timeline.tracks[0]?.clips.find((clip) => clip.id === selectedClipId) ??
+      timeline.tracks[0]?.clips.find((clip) => clip.assetId === media.id);
+    const start = singleSource
+      ? Math.max(0, project.trimStart)
+      : Math.max(0, activeClip?.sourceStart ?? 0);
+    const end = singleSource
+      ? Math.min(project.trimEnd ?? duration, duration)
+      : Math.min((activeClip?.sourceStart ?? 0) + (activeClip?.duration ?? duration), duration);
     if (!Number.isFinite(end) || end <= start) {
       setExportState("error");
       setExportError("Trim end must be after trim start.");
@@ -823,29 +904,46 @@ export default function PhaseOneEditor() {
                       e.currentTarget.currentTime = project.trimStart;
                       replaceProject((p) => ({ ...p, trimEnd: p.trimEnd ?? d }), false);
                     } else {
-                      e.currentTarget.currentTime = 0;
+                      const activeClip =
+                        timeline.tracks[0]?.clips.find((clip) => clip.id === selectedClipId) ??
+                        timeline.tracks[0]?.clips.find((clip) => clip.assetId === media.id);
+                      e.currentTarget.currentTime = activeClip?.sourceStart ?? 0;
                     }
                   }}
                   onPlay={(e) => {
                     const singleSource = mediaItems.length <= 1;
-                    const start = singleSource ? project.trimStart : 0;
-                    const end = singleSource ? (project.trimEnd ?? duration) : duration;
+                    const activeClip =
+                      timeline.tracks[0]?.clips.find((clip) => clip.id === selectedClipId) ??
+                      timeline.tracks[0]?.clips.find((clip) => clip.assetId === media.id);
+                    const start = singleSource ? project.trimStart : (activeClip?.sourceStart ?? 0);
+                    const end = singleSource
+                      ? (project.trimEnd ?? duration)
+                      : (activeClip ? activeClip.sourceStart + activeClip.duration : duration);
                     if (e.currentTarget.currentTime < start || e.currentTarget.currentTime >= end) {
                       e.currentTarget.currentTime = start;
                     }
                   }}
                   onTimeUpdate={(e) => {
                     const singleSource = mediaItems.length <= 1;
-                    const start = singleSource ? project.trimStart : 0;
-                    const end = singleSource ? (project.trimEnd ?? duration) : duration;
-                    const timelineTime = timelineTimeForSource(timeline, media.id, e.currentTarget.currentTime);
+                    const activeClip =
+                      timeline.tracks[0]?.clips.find((clip) => clip.id === selectedClipId) ??
+                      timeline.tracks[0]?.clips.find((clip) => clip.assetId === media.id);
+                    const start = singleSource ? project.trimStart : (activeClip?.sourceStart ?? 0);
+                    const end = singleSource
+                      ? (project.trimEnd ?? duration)
+                      : (activeClip ? activeClip.sourceStart + activeClip.duration : duration);
+                    const timelineTime = activeClip
+                      ? timelineTimeForClip(timeline, activeClip.id, e.currentTarget.currentTime)
+                      : null;
                     if (timelineTime !== null) {
                       setTimeline((current) => setTimelinePlayhead(current, timelineTime));
                     }
                     if (!isExportingRef.current && end > start && e.currentTarget.currentTime >= end) {
                       e.currentTarget.pause();
                       e.currentTarget.currentTime = start;
-                      const resetTime = timelineTimeForSource(timeline, media.id, start);
+                      const resetTime = activeClip
+                        ? timelineTimeForClip(timeline, activeClip.id, start)
+                        : null;
                       if (resetTime !== null) {
                         setTimeline((current) => setTimelinePlayhead(current, resetTime));
                       }
@@ -912,17 +1010,14 @@ export default function PhaseOneEditor() {
               >
                 {timeline.tracks[0]?.clips.map((clip) => (
                   <div
-                    className={media?.id === clip.assetId ? "clip timelineClip active" : "clip timelineClip"}
+                    className={selectedClipId === clip.id ? "clip timelineClip active" : "clip timelineClip"}
                     key={clip.id}
                     data-testid="timeline-clip"
                     style={{
                       left: `${timeline.duration > 0 ? (clip.timelineStart / timeline.duration) * 100 : 0}%`,
                       width: `${timeline.duration > 0 ? (clip.duration / timeline.duration) * 100 : 0}%`,
                     }}
-                    onClick={() => {
-                      const item = mediaItems.find((candidate) => candidate.id === clip.assetId);
-                      if (item) selectMediaItem(item);
-                    }}
+                    onClick={() => selectTimelineClip(clip)}
                   >
                     <strong>{clip.assetName}</strong>
                     <span>{formatTimelineTime(clip.duration)}</span>
@@ -965,6 +1060,53 @@ export default function PhaseOneEditor() {
             </>
           )}
 
+          <h2>Selected clip</h2>
+          {!selectedClip && <p className="hint">Select a clip on Visual 1.</p>}
+          {selectedClip && (
+            <div className="clipInspector" data-testid="clip-inspector">
+              <div className="clipMeta">
+                <strong>{selectedClip.assetName}</strong>
+                <span>{selectedClip.kind}</span>
+              </div>
+              <label>
+                Source start
+                <input
+                  aria-label="Clip source start"
+                  type="number"
+                  min={0}
+                  max={selectedClip.sourceDuration ?? undefined}
+                  step="0.1"
+                  disabled={selectedClip.kind === "image"}
+                  value={selectedClip.sourceStart}
+                  onChange={(e) => updateSelectedClipTrim("sourceStart", Number(e.target.value))}
+                />
+              </label>
+              <label>
+                Clip duration
+                <input
+                  aria-label="Clip duration"
+                  type="number"
+                  min={0.1}
+                  max={
+                    selectedClip.sourceDuration !== null
+                      ? Math.max(0.1, selectedClip.sourceDuration - selectedClip.sourceStart)
+                      : undefined
+                  }
+                  step="0.1"
+                  value={selectedClip.duration}
+                  onChange={(e) => updateSelectedClipTrim("duration", Number(e.target.value))}
+                />
+              </label>
+              <div className="clipActionGrid">
+                <button type="button" onClick={splitSelectedClip}>Split at playhead</button>
+                <button type="button" onClick={duplicateSelectedClip}>Duplicate clip</button>
+                <button type="button" onClick={() => moveSelectedClip(-1)}>Move clip earlier</button>
+                <button type="button" onClick={() => moveSelectedClip(1)}>Move clip later</button>
+              </div>
+              <button type="button" className="danger" onClick={deleteSelectedClip}>Delete clip</button>
+            </div>
+          )}
+
           <h2>Selected element</h2>
           {!selected && <p className="hint">Select a text or logo on the stage.</p>}
           {selected?.kind === "text" && (
@@ -987,8 +1129,8 @@ export default function PhaseOneEditor() {
           {selected && <button className="danger" onClick={deleteSelected}>Delete selected</button>}
 
           <div className="notice">
-            <b>P2 multi-clip foundation</b>
-            <span>Visual 1 now accepts ordered multiple clips. Per-clip split/trim and durable multi-clip snapshots are handled by the next P2 cards.</span>
+            <b>P2 clip editing</b>
+            <span>Visual 1 now supports split, per-clip trim, duplicate, delete and clip-level reordering. Durable snapshots remain tracked separately in NC-P2-09.</span>
           </div>
         </aside>
       </section>
