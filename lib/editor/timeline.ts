@@ -87,12 +87,16 @@ export function buildSequentialTimeline(
     return clip;
   });
 
-  return {
-    schemaVersion: 1,
-    playhead: clamp(playhead, 0, cursor),
-    duration: cursor,
-    tracks: [{ id: "visual-1", kind: "visual", clips }],
-  };
+  return reflowTimeline(
+    {
+      schemaVersion: 1,
+      playhead,
+      duration: cursor,
+      tracks: [{ id: "visual-1", kind: "visual", clips }],
+    },
+    clips,
+    playhead
+  );
 }
 
 export function setTimelinePlayhead(
@@ -140,11 +144,122 @@ export function timelineTimeForSource(
 ): number | null {
   const clip = timeline.tracks[0]?.clips.find((item) => item.assetId === assetId);
   if (!clip) return null;
+  return timelineTimeForClip(timeline, clip.id, sourceTime);
+}
+
+export function timelineTimeForClip(
+  timeline: TimelineState,
+  clipId: string,
+  sourceTime: number
+): number | null {
+  const clip = timeline.tracks[0]?.clips.find((item) => item.id === clipId);
+  if (!clip) return null;
   return clamp(
     clip.timelineStart + (sourceTime - clip.sourceStart),
     clip.timelineStart,
     clip.timelineStart + clip.duration
   );
+}
+
+export function trimTimelineClip(
+  timeline: TimelineState,
+  clipId: string,
+  sourceStart: number,
+  duration: number
+): TimelineState {
+  const clips = timeline.tracks[0]?.clips ?? [];
+  const next = clips.map((clip) => {
+    if (clip.id !== clipId) return clip;
+
+    if (clip.kind === "image") {
+      return {
+        ...clip,
+        sourceStart: 0,
+        duration: Math.max(0.1, duration),
+      };
+    }
+
+    const maxSource = clip.sourceDuration ?? Number.POSITIVE_INFINITY;
+    const nextStart = clamp(sourceStart, 0, Math.max(0, maxSource - 0.1));
+    const maxDuration = Math.max(0.1, maxSource - nextStart);
+    return {
+      ...clip,
+      sourceStart: nextStart,
+      duration: clamp(duration, 0.1, maxDuration),
+    };
+  });
+
+  return reflowTimeline(timeline, next);
+}
+
+export function splitTimelineClip(
+  timeline: TimelineState,
+  clipId: string,
+  offset: number,
+  rightClipId: string
+): TimelineState {
+  const clips = timeline.tracks[0]?.clips ?? [];
+  const index = clips.findIndex((clip) => clip.id === clipId);
+  if (index < 0) return timeline;
+
+  const clip = clips[index];
+  if (offset <= 0.05 || offset >= clip.duration - 0.05) return timeline;
+
+  const left: TimelineClip = {
+    ...clip,
+    duration: offset,
+  };
+  const right: TimelineClip = {
+    ...clip,
+    id: rightClipId,
+    sourceStart: clip.kind === "video" ? clip.sourceStart + offset : clip.sourceStart,
+    duration: clip.duration - offset,
+  };
+
+  const next = [...clips];
+  next.splice(index, 1, left, right);
+  return reflowTimeline(timeline, next, clip.timelineStart + offset);
+}
+
+export function duplicateTimelineClip(
+  timeline: TimelineState,
+  clipId: string,
+  newClipId: string
+): TimelineState {
+  const clips = timeline.tracks[0]?.clips ?? [];
+  const index = clips.findIndex((clip) => clip.id === clipId);
+  if (index < 0) return timeline;
+
+  const copy: TimelineClip = {
+    ...clips[index],
+    id: newClipId,
+  };
+  const next = [...clips];
+  next.splice(index + 1, 0, copy);
+  return reflowTimeline(timeline, next);
+}
+
+export function deleteTimelineClip(
+  timeline: TimelineState,
+  clipId: string
+): TimelineState {
+  const clips = timeline.tracks[0]?.clips ?? [];
+  const next = clips.filter((clip) => clip.id !== clipId);
+  return reflowTimeline(timeline, next);
+}
+
+export function moveTimelineClip(
+  timeline: TimelineState,
+  clipId: string,
+  direction: -1 | 1
+): TimelineState {
+  const clips = [...(timeline.tracks[0]?.clips ?? [])];
+  const index = clips.findIndex((clip) => clip.id === clipId);
+  const target = index + direction;
+  if (index < 0 || target < 0 || target >= clips.length) return timeline;
+
+  [clips[index], clips[target]] = [clips[target], clips[index]];
+  return reflowTimeline(timeline, clips);
 }
 
 export function formatTimelineTime(seconds: number): string {
@@ -154,6 +269,30 @@ export function formatTimelineTime(seconds: number): string {
   return `${String(minutes).padStart(2, "0")}:${remainder
     .toFixed(1)
     .padStart(4, "0")}`;
+}
+
+function reflowTimeline(
+  timeline: TimelineState,
+  clips: TimelineClip[],
+  playhead = timeline.playhead
+): TimelineState {
+  let cursor = 0;
+  const normalized = clips.map((clip) => {
+    const next = {
+      ...clip,
+      timelineStart: cursor,
+      duration: Math.max(0.1, clip.duration),
+    };
+    cursor += next.duration;
+    return next;
+  });
+
+  return {
+    ...timeline,
+    playhead: clamp(playhead, 0, cursor),
+    duration: cursor,
+    tracks: [{ id: "visual-1", kind: "visual", clips: normalized }],
+  };
 }
 
 function clamp(value: number, min: number, max: number) {
