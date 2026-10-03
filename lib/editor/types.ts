@@ -12,6 +12,8 @@ export type TextOverlay = {
   opacity: number;
   align: "left" | "center" | "right";
   direction: "ltr" | "rtl";
+  startTime?: number;
+  endTime?: number | null;
 };
 
 export type ImageOverlay = {
@@ -22,6 +24,8 @@ export type ImageOverlay = {
   y: number;
   width: number;
   opacity: number;
+  startTime?: number;
+  endTime?: number | null;
 };
 
 export type Overlay = TextOverlay | ImageOverlay;
