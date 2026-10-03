@@ -179,3 +179,8 @@ h2 { font-size:12px; text-transform:uppercase; letter-spacing:.1em; color:var(--
 .smartReframeButtons { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
 .smartReframeButtons button { border:1px solid var(--line); border-radius:8px; padding:8px; background:var(--surface-2); color:var(--text); font-size:10px; }
 .smartReframePanel small { color:var(--muted); font-size:9px; line-height:1.4; }
+
+.duckingControls { display:grid; gap:8px; padding:10px; border:1px solid rgba(22,139,241,.24); border-radius:10px; background:rgba(22,139,241,.055); }
+.duckingControls .toggleLabel { display:flex; flex-direction:row; align-items:center; gap:8px; }
+.duckingControls .toggleLabel input { width:auto; }
+.duckingControls small { color:var(--muted); font-size:10px; line-height:1.4; }

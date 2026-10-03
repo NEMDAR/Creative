@@ -111,8 +111,8 @@ test("P1 video trim exports a timed WebM asset", async ({ page }) => {
 
   await page.getByLabel("Trim start").fill("0.1");
   await page.getByLabel("Trim end").fill("0.4");
-  await page.getByRole("button", { name: "9:16" }).click();
-  await expect(page.getByRole("button", { name: "9:16" })).toHaveClass(/active/);
+  await page.getByRole("button", { name: "9:16", exact: true }).click();
+  await expect(page.getByRole("button", { name: "9:16", exact: true })).toHaveClass(/active/);
 
   await page.getByRole("button", { name: "+ Text" }).click();
   await page.getByLabel("Text").fill("فيديو تجريبي Video");
@@ -928,4 +928,63 @@ test("P3 smart reframe keeps an off-center subject inside social framing", async
   await expect
     .poll(async () => Number(await page.getByLabel("Clip crop X").inputValue()))
     .toBeGreaterThan(65);
+});
+
+test("P3 automatic music ducking lowers gain only during captioned speech", async ({ page }) => {
+  await page.goto("/");
+
+  await page.locator('input[accept="video/*,image/*"]').setInputFiles({
+    name: "ducking-canvas.png",
+    mimeType: "image/png",
+    buffer: PNG_1X1,
+  });
+
+  await page.locator('input[accept="audio/*"]').setInputFiles({
+    name: "ducking-music.wav",
+    mimeType: "audio/wav",
+    buffer: createSilentWav(4),
+  });
+
+  await page.getByLabel("Caption language").selectOption("en");
+  await page.getByRole("button", { name: "Generate captions" }).click();
+  await expect(page.locator(".captionCue")).toHaveCount(3);
+
+  await page.locator(".captionCue").nth(0).click();
+  await page.getByLabel("Caption end").fill("0.8");
+
+  await page.locator(".captionCue").nth(1).click();
+  await page.getByLabel("Caption start").fill("2.0");
+
+  await page.getByLabel("Automatic music ducking").check();
+  await page.getByLabel("Ducking gain").fill("0.25");
+
+  await page.locator(".captionCue").nth(0).click();
+
+  const audio = page.locator("audio");
+  await expect(audio).toHaveAttribute("data-effective-gain", "0.200");
+
+  const surface = page.getByTestId("timeline-surface");
+  await surface.scrollIntoViewIfNeeded();
+  const box = await surface.boundingBox();
+  if (!box) throw new Error("Timeline surface has no layout box.");
+
+  await surface.click({ position: { x: box.width * 0.3, y: 1 } });
+  await expect(page.getByTestId("timeline-clock")).toHaveText("00:01.5");
+  await expect(audio).toHaveAttribute("data-effective-gain", "0.800");
+
+  await surface.click({ position: { x: box.width * 0.46, y: 1 } });
+  await expect(audio).toHaveAttribute("data-effective-gain", "0.200");
+
+  const saveState = page.getByTestId("save-state");
+  await expect(saveState).toHaveText("Saved", { timeout: 5_000 });
+  const before = await saveState.getAttribute("data-saved-at");
+  await page.getByLabel("Ducking gain").fill("0.3");
+  await expect
+    .poll(() => saveState.getAttribute("data-saved-at"), { timeout: 5_000 })
+    .not.toBe(before);
+
+  await page.reload();
+
+  await expect(page.getByLabel("Automatic music ducking")).toBeChecked();
+  await expect(page.getByLabel("Ducking gain")).toHaveValue("0.3");
 });

@@ -27,7 +27,7 @@ const initialProject: CreatorProject = {
 
 type MediaItem = { id: string; kind: "video" | "image"; url: string; name: string; type: string; blob: Blob; duration: number };
 type MediaState = MediaItem | null;
-type AudioTrackItem = { id: string; url: string; name: string; type: string; blob: Blob; duration: number; startTime: number; gain: number; fadeIn: number; fadeOut: number };
+type AudioTrackItem = { id: string; url: string; name: string; type: string; blob: Blob; duration: number; startTime: number; gain: number; fadeIn: number; fadeOut: number; duckingEnabled: boolean; duckingGain: number };
 type SilenceReviewRange = { id: string; startTime: number; endTime: number; duration: number; selected: boolean };
 type SilenceSourceKind = "video" | "audio";
 type SceneSuggestion = { id: string; time: number; selected: boolean };
@@ -414,12 +414,15 @@ export default function PhaseOneEditor() {
     const fadeInGain = audioTrack.fadeIn > 0 ? Math.min(1, relativeTime / audioTrack.fadeIn) : 1;
     const timeLeft = Math.max(0, audioTrack.duration - relativeTime);
     const fadeOutGain = audioTrack.fadeOut > 0 ? Math.min(1, timeLeft / audioTrack.fadeOut) : 1;
-    audio.volume = Math.max(0, Math.min(1, audioTrack.gain * Math.min(fadeInGain, fadeOutGain)));
+    const speechActive = Boolean(captionCueAtTime(captions, timeline.playhead));
+    const duckingMultiplier = audioTrack.duckingEnabled && speechActive ? audioTrack.duckingGain : 1;
+    audio.volume = Math.max(0, Math.min(1, audioTrack.gain * Math.min(fadeInGain, fadeOutGain) * duckingMultiplier));
+    audio.dataset.effectiveGain = audio.volume.toFixed(3);
 
     if (videoRef.current && !videoRef.current.paused && audio.paused) {
       void audio.play().catch(() => undefined);
     }
-  }, [timeline.playhead, audioTrack]);
+  }, [timeline.playhead, audioTrack, captions]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -722,6 +725,8 @@ export default function PhaseOneEditor() {
       gain: 0.8,
       fadeIn: 0,
       fadeOut: 0,
+      duckingEnabled: false,
+      duckingGain: 0.3,
     });
     event.target.value = "";
   }
@@ -761,6 +766,8 @@ export default function PhaseOneEditor() {
       next.gain = Math.max(0, Math.min(1, next.gain));
       next.fadeIn = Math.max(0, Math.min(next.fadeIn, next.duration));
       next.fadeOut = Math.max(0, Math.min(next.fadeOut, next.duration));
+      next.duckingGain = Math.max(0, Math.min(1, next.duckingGain ?? 0.3));
+      next.duckingEnabled = Boolean(next.duckingEnabled);
       return next;
     });
   }
@@ -1368,26 +1375,34 @@ export default function PhaseOneEditor() {
   }
 
   function moveMediaItem(id: string, direction: -1 | 1) {
-    let moved = false;
+    const index = mediaItems.findIndex((item) => item.id === id);
+    const target = index + direction;
+    if (index < 0 || target < 0 || target >= mediaItems.length) return;
+
     setMediaItems((current) => {
-      const index = current.findIndex((item) => item.id === id);
-      const target = index + direction;
-      if (index < 0 || target < 0 || target >= current.length) return current;
+      const currentIndex = current.findIndex((item) => item.id === id);
+      const currentTarget = currentIndex + direction;
+      if (
+        currentIndex < 0 ||
+        currentTarget < 0 ||
+        currentTarget >= current.length
+      ) {
+        return current;
+      }
       const next = [...current];
-      [next[index], next[target]] = [next[target], next[index]];
-      moved = true;
+      [next[currentIndex], next[currentTarget]] = [
+        next[currentTarget],
+        next[currentIndex],
+      ];
       return next;
     });
 
-    if (moved) {
-      setTimeline((current) => {
-        const clips = current.tracks[0]?.clips.filter(
-          (clip) => clip.assetId === id
-        ) ?? [];
-        if (clips.length !== 1) return current;
-        return moveTimelineClip(current, clips[0].id, direction);
-      });
-    }
+    setTimeline((current) => {
+      const clips =
+        current.tracks[0]?.clips.filter((clip) => clip.assetId === id) ?? [];
+      if (clips.length !== 1) return current;
+      return moveTimelineClip(current, clips[0].id, direction);
+    });
   }
 
   function addText() {
@@ -1673,6 +1688,8 @@ export default function PhaseOneEditor() {
     const restoredAudio: AudioTrackItem | null = state.audioTrack
       ? {
           ...state.audioTrack,
+          duckingEnabled: state.audioTrack.duckingEnabled ?? false,
+          duckingGain: state.audioTrack.duckingGain ?? 0.3,
           url: createObjectUrl(state.audioTrack.blob),
         }
       : null;
@@ -3467,6 +3484,36 @@ export default function PhaseOneEditor() {
                     onChange={(e) => updateAudioTrack({ fadeOut: Number(e.target.value) })}
                   />
                 </label>
+              </div>
+              <div className="duckingControls" data-testid="ducking-controls">
+                <label className="toggleLabel">
+                  <input
+                    aria-label="Automatic music ducking"
+                    type="checkbox"
+                    checked={audioTrack.duckingEnabled}
+                    disabled={!captions?.cues.length}
+                    onChange={(e) => updateAudioTrack({ duckingEnabled: e.target.checked })}
+                  />
+                  Duck music under speech
+                </label>
+                <label>
+                  Speech gain
+                  <input
+                    aria-label="Ducking gain"
+                    type="range"
+                    min={0.05}
+                    max={1}
+                    step={0.05}
+                    value={audioTrack.duckingGain}
+                    disabled={!audioTrack.duckingEnabled}
+                    onChange={(e) => updateAudioTrack({ duckingGain: Number(e.target.value) })}
+                  />
+                </label>
+                <small>
+                  {captions?.cues.length
+                    ? `Music drops to ${Math.round(audioTrack.duckingGain * 100)}% while captioned speech is active.`
+                    : "Generate captions first to detect speech ranges."}
+                </small>
               </div>
               <button type="button" className="danger" onClick={() => setAudioTrack(null)}>Remove audio</button>
             </div>
