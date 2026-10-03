@@ -16,9 +16,9 @@ test("P1 image creative can be edited, saved, exported and restored", async ({ p
   });
 
   await expect(page.locator(".assetCard strong")).toHaveText("source.png");
-  await expect(page.locator("#creator-image")).toBeVisible();
+  await expect(page.locator("#creative-image")).toBeVisible();
   await expect
-    .poll(() => page.locator("#creator-image").evaluate((img: HTMLImageElement) => img.naturalWidth))
+    .poll(() => page.locator("#creative-image").evaluate((img: HTMLImageElement) => img.naturalWidth))
     .toBeGreaterThan(0);
 
   await page.getByRole("button", { name: "+ Text" }).click();
