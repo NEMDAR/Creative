@@ -118,3 +118,26 @@ test("P1 video trim exports a timed WebM asset", async ({ page }) => {
   expect(download.suggestedFilename()).toMatch(/\.webm$/);
   await expect(terminalState).toContainText("Export ready");
 });
+
+
+test("P2 timeline exposes duration and scrubs the playhead", async ({ page }) => {
+  await page.goto("/");
+
+  const sourceInput = page.locator('input[accept="video/*,image/*"]');
+  await sourceInput.setInputFiles({
+    name: "timeline-source.png",
+    mimeType: "image/png",
+    buffer: PNG_1X1,
+  });
+
+  await expect(page.getByTestId("timeline-clock")).toHaveText("00:00.0");
+  const surface = page.getByTestId("timeline-surface");
+  await expect(surface).toBeVisible();
+
+  const box = await surface.boundingBox();
+  if (!box) throw new Error("Timeline surface has no layout box.");
+  await page.mouse.click(box.x + box.width * 0.6, box.y + box.height / 2);
+
+  await expect(page.getByTestId("timeline-clock")).toHaveText("00:03.0");
+  await expect(page.getByTestId("timeline-playhead")).toHaveCSS("left", /.+/);
+});
