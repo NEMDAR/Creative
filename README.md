@@ -1,8 +1,8 @@
-# NEMDAR Creator
+# NEMDAR Creative Studio
 
 AI-assisted marketing media editor and future campaign production studio.
 
-- Canonical subdomain: `creator.nemdar.tech`
+- Canonical subdomain: `creative.nemdar.tech`
 - Canonical GitHub repository: `NEMDAR/Creative`
 - Notion roadmap: https://app.notion.com/p/3ee10ca04bc9815fb876e4b7c27d8ad6
 - Current execution gate: **P0 → P1**

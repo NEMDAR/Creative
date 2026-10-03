@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "NEMDAR Creator",
+  title: "NEMDAR Creative Studio",
   description: "AI-assisted marketing media editor by NEMDAR",
 };
 
