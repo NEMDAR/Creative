@@ -4,7 +4,7 @@ import { ChangeEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointe
 import { CAPTION_STYLE_PRESETS, captionCueAtTime, cloneCaptionStylePreset, normalizeCaptionStyle, normalizeCaptionTrack, type CaptionCue, type CaptionEmphasis, type CaptionLanguage, type CaptionPosition, type CaptionPresetId, type CaptionStyleConfig, type CaptionTrack } from "../lib/editor/captions";
 import type { CreatorProject, Overlay, RatioKey, TextOverlay } from "../lib/editor/types";
 import { listPhaseTwoSnapshots, loadPhaseOneDraft, loadPhaseTwoDraft, loadPhaseTwoSnapshot, savePhaseTwoDraft, savePhaseTwoSnapshot, type HydratedPhaseTwoState, type PhaseTwoSaveInput, type PhaseTwoSnapshotSummary } from "../lib/editor/storage";
-import { buildSequentialTimeline, createEmptyTimeline, deleteTimelineClip, duplicateTimelineClip, formatTimelineTime, getMaxTransitionDuration, getNextTimelineClip, getTransitionVisualState, isCrossfadeEligible, moveTimelineClip, resolveTimelineTime, setTimelineClipTransition, setTimelinePlayhead, splitTimelineClip, timelineTimeForClip, trimTimelineClip, updateTimelineClipTransform, type ClipFitMode, type TimelineClip, type TransitionType } from "../lib/editor/timeline";
+import { buildSequentialTimeline, createEmptyTimeline, deleteTimelineClip, duplicateTimelineClip, formatTimelineTime, getMaxTransitionDuration, getNextTimelineClip, getTransitionVisualState, isCrossfadeEligible, moveTimelineClip, removeTimelineRange, resolveTimelineTime, setTimelineClipTransition, setTimelinePlayhead, splitTimelineClip, timelineTimeForClip, trimTimelineClip, updateTimelineClipTransform, type ClipFitMode, type TimelineClip, type TransitionType } from "../lib/editor/timeline";
 import type { ServerRenderManifest } from "../lib/render/server-types";
 
 const RATIOS: Record<RatioKey, { w: number; h: number }> = {
@@ -601,6 +601,64 @@ export default function PhaseOneEditor() {
   function selectCaptionCue(cue: CaptionCue) {
     setSelectedCaptionId(cue.id);
     setTimeline((current) => setTimelinePlayhead(current, cue.startTime));
+  }
+
+  function cutSelectedCaptionFromMedia() {
+    if (!selectedCaption || !captions) return;
+
+    const cutStart = Math.max(0, selectedCaption.startTime);
+    const cutEnd = Math.min(timeline.duration, selectedCaption.endTime);
+    const cutDuration = Math.max(0, cutEnd - cutStart);
+    if (cutDuration < 0.05) return;
+
+    const nextTimeline = removeTimelineRange(
+      timeline,
+      cutStart,
+      cutEnd,
+      `clip-${crypto.randomUUID()}`
+    );
+    setTimeline(nextTimeline);
+
+    setCaptions((current) => {
+      if (!current) return current;
+      const cues = current.cues
+        .map((cue) => {
+          if (cue.endTime <= cutStart) return cue;
+          if (cue.startTime >= cutEnd) {
+            return {
+              ...cue,
+              startTime: Math.max(0, cue.startTime - cutDuration),
+              endTime: Math.max(0.05, cue.endTime - cutDuration),
+            };
+          }
+          return null;
+        })
+        .filter((cue): cue is CaptionCue => Boolean(cue));
+
+      return normalizeCaptionTrack({ ...current, cues });
+    });
+
+    setSelectedCaptionId(null);
+
+    const nextClip =
+      resolveTimelineTime(
+        nextTimeline,
+        Math.min(cutStart, Math.max(0, nextTimeline.duration - 0.001))
+      )?.clip ??
+      nextTimeline.tracks[0]?.clips[0] ??
+      null;
+
+    setSelectedClipId(nextClip?.id ?? null);
+    if (!nextClip) {
+      setMedia(null);
+      setDuration(0);
+      return;
+    }
+
+    const nextMedia =
+      mediaItems.find((item) => item.id === nextClip.assetId) ?? null;
+    setMedia(nextMedia);
+    setDuration(nextMedia?.kind === "video" ? nextMedia.duration : 0);
   }
 
   function mapTranscriptToTimeline(track: CaptionTrack): CaptionTrack {
@@ -2658,6 +2716,13 @@ export default function PhaseOneEditor() {
                     <option value="und">Undetermined</option>
                   </select>
                 </label>
+                <button
+                  type="button"
+                  className="danger"
+                  onClick={cutSelectedCaptionFromMedia}
+                >
+                  Cut spoken range from media
+                </button>
               </div>
             )}
           </div>

@@ -768,3 +768,42 @@ test("P3 caption style presets control typography safe-zone and persist", async 
   await expect(page.getByLabel("Caption max width")).toHaveValue("70");
   await expect(page.getByLabel("Caption shadow")).not.toBeChecked();
 });
+
+test("P3 transcript edit cuts the selected spoken range from media", async ({ page }) => {
+  await page.goto("/");
+
+  const sourceInput = page.locator('input[accept="video/*,image/*"]');
+  await sourceInput.setInputFiles([
+    {
+      name: "speech-a.webm",
+      mimeType: "video/webm",
+      buffer: WEBM_CLIP,
+    },
+    {
+      name: "speech-b.webm",
+      mimeType: "video/webm",
+      buffer: WEBM_CLIP,
+    },
+  ]);
+
+  await expect(page.getByTestId("timeline-clip")).toHaveCount(2);
+  await page.getByLabel("Caption language").selectOption("en");
+  await page.getByRole("button", { name: "Generate captions" }).click();
+
+  await expect(page.locator(".captionCue")).toHaveCount(3);
+  await expect(page.getByTestId("caption-cue-editor")).toBeVisible();
+
+  const clipDuration = page.getByLabel("Clip duration");
+  const initialClipDuration = Number(await clipDuration.inputValue());
+  const cutEnd = Number(await page.getByLabel("Caption end").inputValue());
+
+  await page.getByRole("button", { name: "Cut spoken range from media" }).click();
+
+  await expect(page.getByTestId("timeline-clip")).toHaveCount(2);
+  await expect(page.getByTestId("timeline-clip").first()).toContainText("speech-a.webm");
+  await expect(page.locator(".captionCue")).toHaveCount(2);
+  await expect(page.locator(".captionCue").first()).toContainText("00:00.0");
+  await expect
+    .poll(async () => Number(await page.getByLabel("Clip duration").inputValue()))
+    .toBeCloseTo(initialClipDuration - cutEnd, 1);
+});

@@ -496,6 +496,62 @@ export function getTransitionVisualState(
   };
 }
 
+export function removeTimelineRange(
+  timeline: TimelineState,
+  rangeStart: number,
+  rangeEnd: number,
+  rightClipId: string
+): TimelineState {
+  const start = clamp(Math.min(rangeStart, rangeEnd), 0, timeline.duration);
+  const end = clamp(Math.max(rangeStart, rangeEnd), 0, timeline.duration);
+  if (end - start < 0.05) return timeline;
+
+  const clips = timeline.tracks[0]?.clips ?? [];
+  const next: TimelineClip[] = [];
+  let rightIdUsed = false;
+
+  for (const clip of clips) {
+    const clipStart = clip.timelineStart;
+    const clipEnd = clip.timelineStart + clip.duration;
+
+    if (clipEnd <= start || clipStart >= end) {
+      next.push(clip);
+      continue;
+    }
+
+    const overlapStart = Math.max(start, clipStart);
+    const overlapEnd = Math.min(end, clipEnd);
+    const leftDuration = Math.max(0, overlapStart - clipStart);
+    const rightDuration = Math.max(0, clipEnd - overlapEnd);
+
+    if (leftDuration >= 0.05) {
+      next.push({
+        ...clip,
+        duration: leftDuration,
+        transitionOut: rightDuration >= 0.05 ? null : clip.transitionOut,
+      });
+    }
+
+    if (rightDuration >= 0.05) {
+      const removedFromSource =
+        (overlapEnd - clipStart) * Math.max(0.01, clip.transform.speed);
+      next.push({
+        ...clip,
+        id: rightIdUsed ? `${rightClipId}-${next.length}` : rightClipId,
+        sourceStart:
+          clip.kind === "video"
+            ? clip.sourceStart + removedFromSource
+            : clip.sourceStart,
+        duration: rightDuration,
+        transitionOut: clip.transitionOut,
+      });
+      rightIdUsed = true;
+    }
+  }
+
+  return reflowTimeline(timeline, next, start);
+}
+
 export function formatTimelineTime(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) return "00:00.0";
   const minutes = Math.floor(seconds / 60);
