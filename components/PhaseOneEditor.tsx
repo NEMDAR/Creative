@@ -92,7 +92,7 @@ export default function PhaseOneEditor() {
     });
   }
 
-  function createObjectUrl(file: File) {
+  function createObjectUrl(file: Blob) {
     const url = URL.createObjectURL(file);
     mediaObjectUrls.current.push(url);
     return url;
