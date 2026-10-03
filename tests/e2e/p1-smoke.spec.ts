@@ -249,6 +249,7 @@ test("P2 timed overlay tracks control text and logo visibility independently", a
   await expect(overlayBars.nth(1)).toHaveAttribute("data-end", "4.00");
 
   const surface = page.getByTestId("timeline-surface");
+  await surface.scrollIntoViewIfNeeded();
   const box = await surface.boundingBox();
   if (!box) throw new Error("Timeline surface has no layout box.");
 
