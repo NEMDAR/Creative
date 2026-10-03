@@ -919,8 +919,7 @@ export default function PhaseOneEditor() {
                       left: `${timeline.duration > 0 ? (clip.timelineStart / timeline.duration) * 100 : 0}%`,
                       width: `${timeline.duration > 0 ? (clip.duration / timeline.duration) * 100 : 0}%`,
                     }}
-                    onClick={(event) => {
-                      event.stopPropagation();
+                    onClick={() => {
                       const item = mediaItems.find((candidate) => candidate.id === clip.assetId);
                       if (item) selectMediaItem(item);
                     }}
