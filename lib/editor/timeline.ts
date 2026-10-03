@@ -2,6 +2,7 @@ export type TimelineClipKind = "video" | "image";
 
 export type TimelineClip = {
   id: string;
+  assetId: string;
   assetName: string;
   kind: TimelineClipKind;
   timelineStart: number;
@@ -23,6 +24,15 @@ export type TimelineState = {
   tracks: TimelineTrack[];
 };
 
+export type TimelineSourceInput = {
+  assetId: string;
+  assetName: string;
+  kind: TimelineClipKind;
+  sourceStart?: number;
+  duration: number;
+  sourceDuration?: number | null;
+};
+
 export function createEmptyTimeline(): TimelineState {
   return {
     schemaVersion: 1,
@@ -33,6 +43,7 @@ export function createEmptyTimeline(): TimelineState {
 }
 
 export function buildSingleClipTimeline(input: {
+  assetId?: string;
   assetName: string;
   kind: TimelineClipKind;
   sourceStart?: number;
@@ -40,30 +51,47 @@ export function buildSingleClipTimeline(input: {
   sourceDuration?: number | null;
   playhead?: number;
 }): TimelineState {
-  const duration = Math.max(0, input.duration);
-  const playhead = clamp(input.playhead ?? 0, 0, duration);
+  return buildSequentialTimeline(
+    [
+      {
+        assetId: input.assetId ?? "asset-primary",
+        assetName: input.assetName,
+        kind: input.kind,
+        sourceStart: input.sourceStart,
+        duration: input.duration,
+        sourceDuration: input.sourceDuration,
+      },
+    ],
+    input.playhead
+  );
+}
+
+export function buildSequentialTimeline(
+  inputs: TimelineSourceInput[],
+  playhead = 0
+): TimelineState {
+  let cursor = 0;
+  const clips = inputs.map((input, index) => {
+    const duration = Math.max(0, input.duration);
+    const clip: TimelineClip = {
+      id: `clip-${input.assetId || index}`,
+      assetId: input.assetId,
+      assetName: input.assetName,
+      kind: input.kind,
+      timelineStart: cursor,
+      sourceStart: Math.max(0, input.sourceStart ?? 0),
+      duration,
+      sourceDuration: input.sourceDuration ?? null,
+    };
+    cursor += duration;
+    return clip;
+  });
 
   return {
     schemaVersion: 1,
-    playhead,
-    duration,
-    tracks: [
-      {
-        id: "visual-1",
-        kind: "visual",
-        clips: [
-          {
-            id: "clip-primary",
-            assetName: input.assetName,
-            kind: input.kind,
-            timelineStart: 0,
-            sourceStart: Math.max(0, input.sourceStart ?? 0),
-            duration,
-            sourceDuration: input.sourceDuration ?? null,
-          },
-        ],
-      },
-    ],
+    playhead: clamp(playhead, 0, cursor),
+    duration: cursor,
+    tracks: [{ id: "visual-1", kind: "visual", clips }],
   };
 }
 
@@ -77,21 +105,46 @@ export function setTimelinePlayhead(
   };
 }
 
+export function resolveTimelineTime(
+  timeline: TimelineState,
+  timelineTime: number
+): { clip: TimelineClip; sourceTime: number } | null {
+  const track = timeline.tracks[0];
+  if (!track) return null;
+
+  const clamped = clamp(timelineTime, 0, timeline.duration);
+  const clip = track.clips.find((item, index) => {
+    const end = item.timelineStart + item.duration;
+    const isLast = index === track.clips.length - 1;
+    return clamped >= item.timelineStart && (clamped < end || (isLast && clamped <= end));
+  });
+
+  if (!clip) return null;
+  return {
+    clip,
+    sourceTime: clip.sourceStart + (clamped - clip.timelineStart),
+  };
+}
+
 export function timelineToSourceTime(
   timeline: TimelineState,
   timelineTime: number
 ): number | null {
-  const track = timeline.tracks[0];
-  if (!track) return null;
+  return resolveTimelineTime(timeline, timelineTime)?.sourceTime ?? null;
+}
 
-  const clip = track.clips.find(
-    (item) =>
-      timelineTime >= item.timelineStart &&
-      timelineTime <= item.timelineStart + item.duration
-  );
-
+export function timelineTimeForSource(
+  timeline: TimelineState,
+  assetId: string,
+  sourceTime: number
+): number | null {
+  const clip = timeline.tracks[0]?.clips.find((item) => item.assetId === assetId);
   if (!clip) return null;
-  return clip.sourceStart + (timelineTime - clip.timelineStart);
+  return clamp(
+    clip.timelineStart + (sourceTime - clip.sourceStart),
+    clip.timelineStart,
+    clip.timelineStart + clip.duration
+  );
 }
 
 export function formatTimelineTime(seconds: number): string {

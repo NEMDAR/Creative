@@ -141,3 +141,32 @@ test("P2 timeline exposes duration and scrubs the playhead", async ({ page }) =>
   await expect(page.getByTestId("timeline-clock")).toHaveText("00:03.0");
   await expect(page.getByTestId("timeline-playhead")).toHaveCSS("left", /.+/);
 });
+
+
+test("P2 visual track accepts and reorders multiple clips", async ({ page }) => {
+  await page.goto("/");
+
+  const sourceInput = page.locator('input[accept="video/*,image/*"]');
+  await sourceInput.setInputFiles([
+    {
+      name: "first.png",
+      mimeType: "image/png",
+      buffer: PNG_1X1,
+    },
+    {
+      name: "second.png",
+      mimeType: "image/png",
+      buffer: PNG_1X1,
+    },
+  ]);
+
+  const clips = page.getByTestId("timeline-clip");
+  await expect(clips).toHaveCount(2);
+  await expect(clips.nth(0).locator("strong")).toHaveText("first.png");
+  await expect(clips.nth(1).locator("strong")).toHaveText("second.png");
+
+  await page.getByRole("button", { name: "Move second.png earlier" }).click();
+
+  await expect(clips.nth(0).locator("strong")).toHaveText("second.png");
+  await expect(clips.nth(1).locator("strong")).toHaveText("first.png");
+});

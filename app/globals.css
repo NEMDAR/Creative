@@ -27,9 +27,14 @@ button { cursor: pointer; }
 h2 { font-size:12px; text-transform:uppercase; letter-spacing:.1em; color:var(--muted); margin:14px 0 10px; }
 .uploadBox { display:flex; flex-direction:column; gap:5px; border:1px dashed rgba(255,255,255,.18); border-radius:14px; padding:18px; background:rgba(255,255,255,.025); cursor:pointer; }
 .uploadBox small, .hint { color:var(--muted); font-size:12px; line-height:1.5; }
-.assetCard { margin-top:9px; padding:10px; background:var(--surface-2); border-radius:10px; display:flex; gap:8px; align-items:center; min-width:0; }
+.assetList { display:flex; flex-direction:column; gap:7px; margin-top:9px; }
+.assetCard { padding:10px; background:var(--surface-2); border:1px solid transparent; border-radius:10px; display:flex; gap:8px; align-items:center; min-width:0; cursor:pointer; }
+.assetCard.active { border-color:rgba(22,139,241,.7); background:rgba(22,139,241,.1); }
 .assetCard span { color:var(--accent); font-size:10px; text-transform:uppercase; }
-.assetCard strong { font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.assetCard strong { flex:1; min-width:0; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.assetActions { display:flex; gap:4px; }
+.assetActions button { width:25px; height:25px; border:1px solid var(--line); border-radius:7px; background:#0a1020; color:var(--text); padding:0; }
+.assetActions button:disabled { opacity:.3; cursor:not-allowed; }
 .toolButton, .fileButton { width:100%; display:block; text-align:left; background:var(--surface-2); color:var(--text); border:1px solid var(--line); padding:10px 12px; border-radius:10px; margin-bottom:8px; }
 .ratioGrid { display:grid; grid-template-columns:1fr 1fr; gap:7px; }
 .ratio { border:1px solid var(--line); background:transparent; color:var(--muted); padding:9px; border-radius:9px; }
@@ -56,9 +61,10 @@ h2 { font-size:12px; text-transform:uppercase; letter-spacing:.1em; color:var(--
 .trackLabel { font-size:11px; color:var(--muted); }
 .timelineSurface { position:relative; min-height:42px; border:1px solid var(--line); border-radius:9px; background:#080d17; overflow:hidden; cursor:crosshair; }
 .clip { border:1px solid rgba(22,139,241,.34); background:rgba(22,139,241,.12); padding:8px 10px; border-radius:8px; font-size:12px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
-.timelineClip { position:absolute; inset:4px; display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.timelineClip { position:absolute; top:4px; bottom:4px; display:flex; align-items:center; justify-content:space-between; gap:10px; min-width:18px; }
+.timelineClip.active { border-color:rgba(22,139,241,.9); background:rgba(22,139,241,.22); }
 .timelineClip strong { overflow:hidden; text-overflow:ellipsis; }
-.timelineClip span { color:var(--muted); font-size:10px; }
+.timelineClip span { color:var(--muted); font-size:10px; flex:0 0 auto; }
 .timelinePlayhead { position:absolute; top:0; bottom:0; width:2px; background:var(--accent); transform:translateX(-1px); pointer-events:none; box-shadow:0 0 10px rgba(22,139,241,.7); }
 .timelinePlayhead::before { content:""; position:absolute; top:0; left:50%; width:8px; height:8px; transform:translate(-50%,-1px) rotate(45deg); background:var(--accent); }
 .overlayTrack { min-height:33px; display:flex; gap:6px; border:1px solid var(--line); border-radius:8px; padding:5px; }
