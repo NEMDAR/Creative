@@ -243,15 +243,22 @@ test("P2 timed overlay tracks control text and logo visibility independently", a
   await page.getByLabel("Overlay start").fill("3");
   await page.getByLabel("Overlay end").fill("4");
 
+  const overlayBars = page.getByTestId("overlay-track-item");
+  await expect(overlayBars.nth(0)).toHaveAttribute("data-start", "1.00");
+  await expect(overlayBars.nth(0)).toHaveAttribute("data-end", "2.00");
+  await expect(overlayBars.nth(1)).toHaveAttribute("data-end", "4.00");
+
   const surface = page.getByTestId("timeline-surface");
   const box = await surface.boundingBox();
   if (!box) throw new Error("Timeline surface has no layout box.");
 
   await page.mouse.click(box.x + box.width * 0.3, box.y + box.height / 2);
+  await expect(page.getByTestId("timeline-clock")).toHaveText("00:01.5");
   await expect(page.locator(".stage .overlay span").filter({ hasText: "Timed overlay" })).toBeVisible();
   await expect(page.locator('.stage .overlay img[alt="Overlay"]')).toHaveCount(0);
 
   await page.mouse.click(box.x + box.width * 0.7, box.y + box.height / 2);
+  await expect(page.getByTestId("timeline-clock")).toHaveText("00:03.5");
   await expect(page.locator(".stage .overlay span").filter({ hasText: "Timed overlay" })).toHaveCount(0);
   await expect(page.locator('.stage .overlay img[alt="Overlay"]')).toBeVisible();
 });
