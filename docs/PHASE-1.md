@@ -22,4 +22,4 @@ As a marketer, I can upload a source clip, add Arabic or English text and a logo
 No multi-clip timeline, captions, AI generation, transitions, keyframes, social publishing, collaboration or analytics. Those are later gates.
 
 ## Current bootstrap implementation
-The scaffold now includes media upload/preview, text/logo overlays, dragging, full basic text controls, ratio presets, RTL support, trim-aware preview, mute/volume, undo/redo, local project/overlay draft persistence and current-frame PNG export. Source media still needs reselection after browser restart. Timed video export remains a tracked P1 card and is intentionally not marked complete.
+The Phase 1 implementation now includes media upload/preview, text/logo overlays, dragging, full basic text controls, ratio presets, RTL support, trim-aware preview, mute/volume, undo/redo, IndexedDB persistence for the project and source media, PNG export for image creatives, and timed local WebM video export with overlays, trim, progress and error state. A production server-side MP4 render/transcode path is intentionally deferred to production hardening; it does not block the local Chromium P1 gate.
