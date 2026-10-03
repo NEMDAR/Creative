@@ -7,6 +7,7 @@ import type { CreatorProject, Overlay, RatioKey, TextOverlay } from "../lib/edit
 import { listPhaseTwoSnapshots, loadBrandKit, loadPhaseOneDraft, loadPhaseTwoDraft, loadPhaseTwoSnapshot, saveBrandKit, savePhaseTwoDraft, savePhaseTwoSnapshot, type HydratedPhaseTwoState, type PhaseTwoSaveInput, type PhaseTwoSnapshotSummary } from "../lib/editor/storage";
 import { buildSequentialTimeline, createEmptyTimeline, deleteTimelineClip, duplicateTimelineClip, formatTimelineTime, getMaxTransitionDuration, getNextTimelineClip, getTransitionVisualState, isCrossfadeEligible, moveTimelineClip, removeTimelineRange, resolveTimelineTime, setTimelineClipTransition, setTimelinePlayhead, splitTimelineClip, timelineTimeForClip, trimTimelineClip, updateTimelineClipTransform, type ClipFitMode, type TimelineClip, type TimelineState, type TransitionType } from "../lib/editor/timeline";
 import { instantiateMarketingTemplate, MARKETING_TEMPLATES, type MarketingTemplateId } from "../lib/editor/templates";
+import { compileEditorCommand, type EditorCommandPlan } from "../lib/editor/command-bar";
 import type { ServerRenderManifest } from "../lib/render/server-types";
 
 const RATIOS: Record<RatioKey, { w: number; h: number }> = {
@@ -360,6 +361,9 @@ export default function PhaseOneEditor() {
   const [captionStyle, setCaptionStyle] = useState<CaptionStyleConfig>(() => cloneCaptionStylePreset("clean"));
   const [brandKit, setBrandKit] = useState<BrandKit>(() => normalizeBrandKit(DEFAULT_BRAND_KIT));
   const [brandState, setBrandState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [commandInput, setCommandInput] = useState("");
+  const [commandPlan, setCommandPlan] = useState<EditorCommandPlan | null>(null);
+  const [commandError, setCommandError] = useState<string | null>(null);
   const [captionLanguage, setCaptionLanguage] = useState<CaptionLanguage>("auto");
   const [captionState, setCaptionState] = useState<"idle" | "generating" | "ready" | "error">("idle");
   const [captionError, setCaptionError] = useState<string | null>(null);
@@ -936,6 +940,96 @@ export default function PhaseOneEditor() {
         setSaveState("error");
       }
     })();
+  }
+
+  function previewEditorCommand() {
+    const result = compileEditorCommand(commandInput, {
+      selectedOverlayId: selectedId,
+    });
+    setCommandPlan(result.plan);
+    setCommandError(result.error);
+  }
+
+  function applyEditorCommandPlan() {
+    if (!commandPlan) return;
+
+    for (const action of commandPlan.actions) {
+      if (
+        action.type === "delete_selected_overlay" &&
+        !project.overlays.some((overlay) => overlay.id === action.overlayId)
+      ) {
+        setCommandPlan(null);
+        setCommandError("The selected overlay changed. Preview the command again.");
+        return;
+      }
+    }
+
+    let lastAddedId: string | null = null;
+    let deletedSelected = false;
+
+    replaceProject((current) => {
+      let next: CreatorProject = {
+        ...current,
+        overlays: [...current.overlays],
+      };
+
+      for (const action of commandPlan.actions) {
+        switch (action.type) {
+          case "set_ratio":
+            next = { ...next, ratio: action.ratio };
+            break;
+          case "set_muted":
+            next = { ...next, muted: action.muted };
+            break;
+          case "rename_project":
+            next = { ...next, name: action.name };
+            break;
+          case "add_text": {
+            const id = crypto.randomUUID();
+            lastAddedId = id;
+            next = {
+              ...next,
+              overlays: [
+                ...next.overlays,
+                {
+                  id,
+                  kind: "text",
+                  text: action.text,
+                  x: 50,
+                  y: 22,
+                  fontSize: 44,
+                  fontWeight: brandKit.headingWeight,
+                  fontFamily: brandKit.headingFont,
+                  color: brandKit.primaryColor,
+                  opacity: 1,
+                  align: "center",
+                  direction: /[\u0600-\u06FF]/.test(action.text) ? "rtl" : "ltr",
+                  ...defaultOverlayTiming(),
+                },
+              ],
+            };
+            break;
+          }
+          case "delete_selected_overlay":
+            next = {
+              ...next,
+              overlays: next.overlays.filter(
+                (overlay) => overlay.id !== action.overlayId
+              ),
+            };
+            if (selectedId === action.overlayId) deletedSelected = true;
+            break;
+        }
+      }
+
+      return next;
+    });
+
+    if (lastAddedId) setSelectedId(lastAddedId);
+    else if (deletedSelected) setSelectedId(null);
+
+    setCommandPlan(null);
+    setCommandError(null);
   }
 
   function updateCaptionCue(id: string, patch: Partial<CaptionCue>) {
@@ -2707,7 +2801,7 @@ export default function PhaseOneEditor() {
         <div>
           <span className="eyebrow">NEMDAR</span>
           <strong>Creative Studio</strong>
-          <span className="phaseChip">P3 Marketing Templates</span>
+          <span className="phaseChip">P3 AI Command Bar</span>
         </div>
         <div className="topActions">
           <button className="ghost" onClick={undo}>Undo</button>
@@ -2731,6 +2825,57 @@ export default function PhaseOneEditor() {
           </button>
         </div>
       </header>
+
+      <section className="commandBar" data-testid="command-bar">
+        <div className="commandBarInput">
+          <span className="commandSpark">AI</span>
+          <input
+            aria-label="AI edit command"
+            value={commandInput}
+            placeholder="Try: set ratio to 4:5; add text: Limited offer"
+            onChange={(e) => {
+              setCommandInput(e.target.value);
+              setCommandPlan(null);
+              setCommandError(null);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") previewEditorCommand();
+            }}
+          />
+          <button type="button" className="ghost" onClick={previewEditorCommand}>
+            Preview command
+          </button>
+        </div>
+        <div className="commandExamples">
+          <span>Examples:</span>
+          <button type="button" onClick={() => setCommandInput("set ratio to 4:5; add text: Limited offer")}>
+            Ratio + text
+          </button>
+          <button type="button" onClick={() => setCommandInput("أضف نص: عرض خاص")}>
+            Arabic text
+          </button>
+          <button type="button" onClick={() => setCommandInput("mute video")}>
+            Mute
+          </button>
+        </div>
+        {commandError && <p className="commandError" role="alert">{commandError}</p>}
+        {commandPlan && (
+          <div className="commandPlan" data-testid="command-plan">
+            <div>
+              <strong>Validated action plan</strong>
+              <small>No edits are applied until you confirm.</small>
+            </div>
+            <ol>
+              {commandPlan.summary.map((item, index) => (
+                <li key={`${item}-${index}`}>{item}</li>
+              ))}
+            </ol>
+            <button type="button" className="primary" onClick={applyEditorCommandPlan}>
+              Apply actions
+            </button>
+          </div>
+        )}
+      </section>
 
       <section className="workspace">
         <aside className="panel leftPanel">

@@ -47,12 +47,12 @@ test("P1 image creative can be edited, saved, exported and restored", async ({ p
     .poll(() => page.locator("#creative-image").evaluate((img: HTMLImageElement) => img.naturalWidth))
     .toBeGreaterThan(0);
 
-  await page.getByRole("button", { name: "+ Text" }).click();
+  await page.getByRole("button", { name: "+ Text", exact: true }).click();
   await page.getByLabel("Text").fill("إعلان تجريبي");
   await page.getByLabel("Alignment").selectOption("right");
   await page.getByLabel("Opacity").first().fill("0.8");
 
-  const logoInput = page.locator('input[accept="image/*"]');
+  const logoInput = page.getByLabel("+ Logo / image", { exact: true });
   await logoInput.setInputFiles({
     name: "logo.png",
     mimeType: "image/png",
@@ -84,7 +84,7 @@ test("P1 image creative can be edited, saved, exported and restored", async ({ p
 
 test("P1 undo/redo restores editor state", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "+ Text" }).click();
+  await page.getByRole("button", { name: "+ Text", exact: true }).click();
   await page.getByLabel("Text").fill("First");
   await page.getByLabel("Text").fill("Second");
 
@@ -114,10 +114,10 @@ test("P1 video trim exports a timed WebM asset", async ({ page }) => {
   await page.getByRole("button", { name: "9:16", exact: true }).click();
   await expect(page.getByRole("button", { name: "9:16", exact: true })).toHaveClass(/active/);
 
-  await page.getByRole("button", { name: "+ Text" }).click();
+  await page.getByRole("button", { name: "+ Text", exact: true }).click();
   await page.getByLabel("Text").fill("فيديو تجريبي Video");
 
-  const logoInput = page.locator('input[accept="image/*"]');
+  const logoInput = page.getByLabel("+ Logo / image", { exact: true });
   await logoInput.setInputFiles({
     name: "logo.png",
     mimeType: "image/png",
@@ -250,12 +250,12 @@ test("P2 timed overlay tracks control text and logo visibility independently", a
     buffer: PNG_1X1,
   });
 
-  await page.getByRole("button", { name: "+ Text" }).click();
+  await page.getByRole("button", { name: "+ Text", exact: true }).click();
   await page.getByLabel("Text").fill("Timed overlay");
   await page.getByLabel("Overlay start").fill("1");
   await page.getByLabel("Overlay end").fill("2");
 
-  const logoInput = page.locator('input[accept="image/*"]');
+  const logoInput = page.getByLabel("+ Logo / image", { exact: true });
   await logoInput.setInputFiles({
     name: "timed-logo.png",
     mimeType: "image/png",
@@ -562,7 +562,7 @@ test("P2 durable server render queue exports a real MP4", async ({ page }) => {
   await expect(renderState).toBeVisible();
 
   // Rendering runs on the server; editing remains interactive while the job is active.
-  await page.getByRole("button", { name: "+ Text" }).click();
+  await page.getByRole("button", { name: "+ Text", exact: true }).click();
   await expect(page.getByLabel("Text")).toBeVisible();
 
   const download = await downloadPromise;
@@ -599,7 +599,7 @@ test("P2 representative long project stays responsive and renders MP4", async ({
   await expect(page.getByTestId("transition-badge").first()).toHaveText("XF");
 
   // Add a timed marketing overlay.
-  await page.getByRole("button", { name: "+ Text" }).click();
+  await page.getByRole("button", { name: "+ Text", exact: true }).click();
   await page.getByLabel("Text").fill("NEMDAR performance smoke");
   await page.getByLabel("Overlay start").fill("2");
   await page.getByLabel("Overlay end").fill("6");
@@ -1012,7 +1012,7 @@ test("P3 Brand Kit persists and applies approved identity without duplicating lo
   });
   await expect(page.getByTestId("brand-logo-preview")).toContainText("approved-logo.png");
 
-  await page.getByRole("button", { name: "+ Text" }).click();
+  await page.getByRole("button", { name: "+ Text", exact: true }).click();
   await page.getByLabel("Text").fill("Brand headline");
   await page.getByRole("button", { name: "Apply Brand" }).click();
 
@@ -1082,4 +1082,50 @@ test("P3 marketing template creates a brand-safe editable project and persists e
   await expect(page.getByRole("textbox", { name: "Name", exact: true })).toHaveValue("Template Brand — Product Spotlight");
   await expect(page.locator(".stage .overlay span").filter({ hasText: "Editable campaign hook" })).toBeVisible();
   await expect(page.locator('.stage .overlay img[alt="Overlay"]')).toHaveCount(1);
+});
+
+test("P3 AI command bar previews validated edits applies atomically and supports undo", async ({ page }) => {
+  await page.goto("/");
+
+  const command = page.getByLabel("AI edit command");
+  await command.fill("set ratio to 4:5; add text: Limited offer");
+  await page.getByRole("button", { name: "Preview command" }).click();
+
+  const plan = page.getByTestId("command-plan");
+  await expect(plan).toBeVisible();
+  await expect(plan.locator("li")).toHaveCount(2);
+  await expect(plan).toContainText("Set canvas ratio to 4:5");
+  await expect(plan).toContainText("Add text “Limited offer”");
+
+  await expect(page.getByRole("button", { name: "9:16", exact: true })).toHaveClass(/active/);
+  await expect(page.locator(".stage .overlay span").filter({ hasText: "Limited offer" })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Apply actions" }).click();
+
+  await expect(page.getByRole("button", { name: "4:5", exact: true })).toHaveClass(/active/);
+  await expect(page.locator(".stage .overlay span").filter({ hasText: "Limited offer" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Undo" }).click();
+  await expect(page.getByRole("button", { name: "9:16", exact: true })).toHaveClass(/active/);
+  await expect(page.locator(".stage .overlay span").filter({ hasText: "Limited offer" })).toHaveCount(0);
+
+  await command.fill("أضف نص: عرض خاص");
+  await page.getByRole("button", { name: "Preview command" }).click();
+  await expect(page.getByTestId("command-plan")).toContainText("عرض خاص");
+  await page.getByRole("button", { name: "Apply actions" }).click();
+
+  const arabicText = page.locator(".stage .overlay span").filter({ hasText: "عرض خاص" });
+  await expect(arabicText).toBeVisible();
+  await expect(arabicText).toHaveCSS("direction", "rtl");
+});
+
+test("P3 AI command bar rejects unsupported edits before mutation", async ({ page }) => {
+  await page.goto("/");
+
+  await page.getByLabel("AI edit command").fill("make everything cinematic");
+  await page.getByRole("button", { name: "Preview command" }).click();
+
+  await expect(page.locator(".commandError")).toContainText("Unsupported command");
+  await expect(page.getByTestId("command-plan")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "9:16", exact: true })).toHaveClass(/active/);
 });
