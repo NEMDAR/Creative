@@ -170,3 +170,49 @@ test("P2 visual track accepts and reorders multiple clips", async ({ page }) => 
   await expect(clips.nth(0).locator("strong")).toHaveText("second.png");
   await expect(clips.nth(1).locator("strong")).toHaveText("first.png");
 });
+
+
+test("P2 clip editing supports reorder split trim duplicate and delete", async ({ page }) => {
+  await page.goto("/");
+
+  const sourceInput = page.locator('input[accept="video/*,image/*"]');
+  await sourceInput.setInputFiles([
+    {
+      name: "alpha.png",
+      mimeType: "image/png",
+      buffer: PNG_1X1,
+    },
+    {
+      name: "beta.png",
+      mimeType: "image/png",
+      buffer: PNG_1X1,
+    },
+  ]);
+
+  const clips = page.getByTestId("timeline-clip");
+  await expect(clips).toHaveCount(2);
+  await expect(clips.nth(0).locator("strong")).toHaveText("alpha.png");
+  await expect(clips.nth(1).locator("strong")).toHaveText("beta.png");
+
+  await page.getByRole("button", { name: "Move clip later" }).click();
+  await expect(clips.nth(0).locator("strong")).toHaveText("beta.png");
+  await expect(clips.nth(1).locator("strong")).toHaveText("alpha.png");
+
+  const surface = page.getByTestId("timeline-surface");
+  const box = await surface.boundingBox();
+  if (!box) throw new Error("Timeline surface has no layout box.");
+  await page.mouse.click(box.x + box.width * 0.75, box.y + box.height / 2);
+  await expect(page.getByTestId("timeline-clock")).toHaveText("00:07.5");
+
+  await page.getByRole("button", { name: "Split at playhead" }).click();
+  await expect(clips).toHaveCount(3);
+
+  await page.getByLabel("Clip duration").fill("1.5");
+  await expect(page.getByLabel("Clip duration")).toHaveValue("1.5");
+
+  await page.getByRole("button", { name: "Duplicate clip" }).click();
+  await expect(clips).toHaveCount(4);
+
+  await page.getByRole("button", { name: "Delete clip" }).click();
+  await expect(clips).toHaveCount(3);
+});
