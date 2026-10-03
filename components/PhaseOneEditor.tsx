@@ -31,6 +31,8 @@ export default function PhaseOneEditor() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const mediaObjectUrls = useRef<string[]>([]);
+  const undoStack = useRef<CreatorProject[]>([]);
+  const redoStack = useRef<CreatorProject[]>([]);
 
   useEffect(() => {
     if (!videoRef.current) return;
@@ -38,13 +40,51 @@ export default function PhaseOneEditor() {
     videoRef.current.muted = project.muted;
   }, [project.volume, project.muted, media]);
 
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || media?.kind !== "video") return;
+    const trimEnd = project.trimEnd ?? duration;
+    if (video.currentTime < project.trimStart || video.currentTime > trimEnd) {
+      video.currentTime = project.trimStart;
+    }
+  }, [project.trimStart, project.trimEnd, duration, media]);
+
   const selected = useMemo(
     () => project.overlays.find((overlay) => overlay.id === selectedId) ?? null,
     [project.overlays, selectedId]
   );
 
-  function replaceProject(updater: (current: CreatorProject) => CreatorProject) {
-    setProject((current) => updater(current));
+  function replaceProject(
+    updater: (current: CreatorProject) => CreatorProject,
+    recordHistory = true
+  ) {
+    setProject((current) => {
+      const next = updater(current);
+      if (recordHistory && JSON.stringify(next) !== JSON.stringify(current)) {
+        undoStack.current.push(current);
+        if (undoStack.current.length > 100) undoStack.current.shift();
+        redoStack.current = [];
+      }
+      return next;
+    });
+  }
+
+  function undo() {
+    const previous = undoStack.current.pop();
+    if (!previous) return;
+    setProject((current) => {
+      redoStack.current.push(current);
+      return previous;
+    });
+  }
+
+  function redo() {
+    const next = redoStack.current.pop();
+    if (!next) return;
+    setProject((current) => {
+      undoStack.current.push(current);
+      return next;
+    });
   }
 
   function createObjectUrl(file: File) {
@@ -85,27 +125,31 @@ export default function PhaseOneEditor() {
   function addLogo(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file || !file.type.startsWith("image/")) return;
-    const id = crypto.randomUUID();
-    const overlay: Overlay = {
-      id,
-      kind: "image",
-      src: createObjectUrl(file),
-      x: 80,
-      y: 10,
-      width: 18,
-      opacity: 1,
+    const reader = new FileReader();
+    reader.onload = () => {
+      const id = crypto.randomUUID();
+      const overlay: Overlay = {
+        id,
+        kind: "image",
+        src: String(reader.result),
+        x: 80,
+        y: 10,
+        width: 18,
+        opacity: 1,
+      };
+      replaceProject((p) => ({ ...p, overlays: [...p.overlays, overlay] }));
+      setSelectedId(id);
     };
-    replaceProject((p) => ({ ...p, overlays: [...p.overlays, overlay] }));
-    setSelectedId(id);
+    reader.readAsDataURL(file);
   }
 
-  function updateOverlay(id: string, patch: Partial<Overlay>) {
+  function updateOverlay(id: string, patch: Partial<Overlay>, recordHistory = true) {
     replaceProject((p) => ({
       ...p,
       overlays: p.overlays.map((overlay) =>
         overlay.id === id ? ({ ...overlay, ...patch } as Overlay) : overlay
       ),
-    }));
+    }), recordHistory);
   }
 
   function deleteSelected() {
@@ -121,12 +165,20 @@ export default function PhaseOneEditor() {
     event.currentTarget.setPointerCapture(event.pointerId);
     setSelectedId(overlay.id);
     const rect = stage.getBoundingClientRect();
+    const beforeDrag = project;
+    let moved = false;
     const onMove = (e: PointerEvent) => {
+      moved = true;
       const x = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
       const y = Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100));
-      updateOverlay(overlay.id, { x, y } as Partial<Overlay>);
+      updateOverlay(overlay.id, { x, y } as Partial<Overlay>, false);
     };
     const onUp = () => {
+      if (moved) {
+        undoStack.current.push(beforeDrag);
+        if (undoStack.current.length > 100) undoStack.current.shift();
+        redoStack.current = [];
+      }
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
     };
@@ -135,20 +187,19 @@ export default function PhaseOneEditor() {
   }
 
   function saveDraft() {
-    const serializable = {
-      ...project,
-      overlays: project.overlays.filter((o) => o.kind === "text"),
-      note: "Local media files are intentionally not persisted in the P0 bootstrap.",
-    };
-    localStorage.setItem("nemdar-creator-phase1", JSON.stringify(serializable));
-    alert("Project settings saved locally. Re-select media after a browser restart in this bootstrap build.");
+    try {
+      localStorage.setItem("nemdar-creator-phase1", JSON.stringify(project));
+      alert("Project settings and overlays saved locally. Re-select the source media after a browser restart.");
+    } catch {
+      alert("This draft is too large for local browser storage. Use a smaller logo or remove large image overlays.");
+    }
   }
 
   function loadDraft() {
     const raw = localStorage.getItem("nemdar-creator-phase1");
     if (!raw) return alert("No local draft found.");
     const parsed = JSON.parse(raw) as CreatorProject;
-    setProject({ ...initialProject, ...parsed });
+    replaceProject(() => ({ ...initialProject, ...parsed }));
     setSelectedId(null);
   }
 
@@ -233,6 +284,8 @@ export default function PhaseOneEditor() {
           <span className="phaseChip">P0/P1 bootstrap</span>
         </div>
         <div className="topActions">
+          <button className="ghost" onClick={undo}>Undo</button>
+          <button className="ghost" onClick={redo}>Redo</button>
           <button className="ghost" onClick={loadDraft}>Load draft</button>
           <button className="ghost" onClick={saveDraft}>Save draft</button>
           <button className="primary" onClick={exportCurrentFrame}>Export frame</button>
@@ -281,7 +334,21 @@ export default function PhaseOneEditor() {
                   onLoadedMetadata={(e) => {
                     const d = e.currentTarget.duration || 0;
                     setDuration(d);
-                    replaceProject((p) => ({ ...p, trimEnd: p.trimEnd ?? d }));
+                    e.currentTarget.currentTime = project.trimStart;
+                    replaceProject((p) => ({ ...p, trimEnd: p.trimEnd ?? d }), false);
+                  }}
+                  onPlay={(e) => {
+                    const end = project.trimEnd ?? duration;
+                    if (e.currentTarget.currentTime < project.trimStart || e.currentTarget.currentTime >= end) {
+                      e.currentTarget.currentTime = project.trimStart;
+                    }
+                  }}
+                  onTimeUpdate={(e) => {
+                    const end = project.trimEnd ?? duration;
+                    if (end > project.trimStart && e.currentTarget.currentTime >= end) {
+                      e.currentTarget.pause();
+                      e.currentTarget.currentTime = project.trimStart;
+                    }
                   }}
                   className="mediaLayer"
                 />
@@ -340,8 +407,14 @@ export default function PhaseOneEditor() {
           {media?.kind === "video" && (
             <>
               <h2>Video</h2>
-              <label>Trim start<input type="number" min={0} max={duration} step="0.1" value={project.trimStart} onChange={(e) => replaceProject((p) => ({ ...p, trimStart: Number(e.target.value) }))} /></label>
-              <label>Trim end<input type="number" min={0} max={duration} step="0.1" value={project.trimEnd ?? duration} onChange={(e) => replaceProject((p) => ({ ...p, trimEnd: Number(e.target.value) }))} /></label>
+              <label>Trim start<input type="number" min={0} max={project.trimEnd ?? duration} step="0.1" value={project.trimStart} onChange={(e) => {
+                const value = Math.max(0, Math.min(Number(e.target.value), project.trimEnd ?? duration));
+                replaceProject((p) => ({ ...p, trimStart: value }));
+              }} /></label>
+              <label>Trim end<input type="number" min={project.trimStart} max={duration} step="0.1" value={project.trimEnd ?? duration} onChange={(e) => {
+                const value = Math.max(project.trimStart, Math.min(Number(e.target.value), duration));
+                replaceProject((p) => ({ ...p, trimEnd: value }));
+              }} /></label>
               <label>Volume<input type="range" min="0" max="1" step="0.05" value={project.volume} onChange={(e) => replaceProject((p) => ({ ...p, volume: Number(e.target.value) }))} /></label>
               <label className="check"><input type="checkbox" checked={project.muted} onChange={(e) => replaceProject((p) => ({ ...p, muted: e.target.checked }))} /> Muted</label>
             </>
@@ -355,10 +428,17 @@ export default function PhaseOneEditor() {
               <label>Font size<input type="range" min="18" max="96" value={selected.fontSize} onChange={(e) => updateOverlay(selected.id, { fontSize: Number(e.target.value) } as Partial<Overlay>)} /></label>
               <label>Weight<select value={selected.fontWeight} onChange={(e) => updateOverlay(selected.id, { fontWeight: Number(e.target.value) } as Partial<Overlay>)}><option value="400">Regular</option><option value="600">Semi Bold</option><option value="700">Bold</option><option value="800">Extra Bold</option></select></label>
               <label>Color<input type="color" value={selected.color} onChange={(e) => updateOverlay(selected.id, { color: e.target.value } as Partial<Overlay>)} /></label>
+              <label>Alignment<select value={selected.align} onChange={(e) => updateOverlay(selected.id, { align: e.target.value as "left" | "center" | "right" } as Partial<Overlay>)}><option value="left">Left</option><option value="center">Center</option><option value="right">Right</option></select></label>
+              <label>Opacity<input type="range" min="0.1" max="1" step="0.05" value={selected.opacity} onChange={(e) => updateOverlay(selected.id, { opacity: Number(e.target.value) } as Partial<Overlay>)} /></label>
               <label>Direction<select value={selected.direction} onChange={(e) => updateOverlay(selected.id, { direction: e.target.value as "rtl" | "ltr" } as Partial<Overlay>)}><option value="rtl">RTL</option><option value="ltr">LTR</option></select></label>
             </>
           )}
-          {selected?.kind === "image" && <label>Logo width<input type="range" min="5" max="50" value={selected.width} onChange={(e) => updateOverlay(selected.id, { width: Number(e.target.value) } as Partial<Overlay>)} /></label>}
+          {selected?.kind === "image" && (
+            <>
+              <label>Logo width<input type="range" min="5" max="50" value={selected.width} onChange={(e) => updateOverlay(selected.id, { width: Number(e.target.value) } as Partial<Overlay>)} /></label>
+              <label>Opacity<input type="range" min="0.1" max="1" step="0.05" value={selected.opacity} onChange={(e) => updateOverlay(selected.id, { opacity: Number(e.target.value) } as Partial<Overlay>)} /></label>
+            </>
+          )}
           {selected && <button className="danger" onClick={deleteSelected}>Delete selected</button>}
 
           <div className="notice">

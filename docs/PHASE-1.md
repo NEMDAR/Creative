@@ -22,4 +22,4 @@ As a marketer, I can upload a source clip, add Arabic or English text and a logo
 No multi-clip timeline, captions, AI generation, transitions, keyframes, social publishing, collaboration or analytics. Those are later gates.
 
 ## Current bootstrap implementation
-The scaffold includes media upload/preview, text/logo overlays, dragging, ratio presets, RTL support, trim/volume controls, local draft settings and current-frame PNG export. Timed video export remains a tracked P1 card and is intentionally not marked complete.
+The scaffold now includes media upload/preview, text/logo overlays, dragging, full basic text controls, ratio presets, RTL support, trim-aware preview, mute/volume, undo/redo, local project/overlay draft persistence and current-frame PNG export. Source media still needs reselection after browser restart. Timed video export remains a tracked P1 card and is intentionally not marked complete.
