@@ -435,33 +435,42 @@ export default function PhaseOneEditor() {
         recorder.onerror = () => reject(new Error("Video recording failed."));
       });
 
+      const exportDurationMs = Math.max(1, (end - start) * 1000);
+      const originalMuted = video.muted;
+      video.muted = true;
+      drawCompositionFrame(ctx, video, canvas.width, canvas.height, overlayImages);
       recorder.start(250);
       await video.play();
 
       await new Promise<void>((resolve, reject) => {
+        const startedAt = performance.now();
+
         const render = () => {
           try {
             if (video.readyState >= 2) {
               drawCompositionFrame(ctx, video, canvas.width, canvas.height, overlayImages);
             }
 
-            const current = video.currentTime;
-            const progress = Math.max(0, Math.min(1, (current - start) / (end - start)));
+            const elapsedMs = performance.now() - startedAt;
+            const progress = Math.max(0, Math.min(1, elapsedMs / exportDurationMs));
             setExportProgress(Math.round(progress * 100));
 
-            if (current >= end - 0.025 || video.ended) {
+            if (elapsedMs >= exportDurationMs || video.currentTime >= end - 0.025 || video.ended) {
               video.pause();
+              video.muted = originalMuted;
               if (recorder.state !== "inactive") recorder.stop();
               resolve();
               return;
             }
 
-            requestAnimationFrame(render);
+            window.setTimeout(render, 1000 / 30);
           } catch (error) {
+            video.muted = originalMuted;
             reject(error);
           }
         };
-        requestAnimationFrame(render);
+
+        window.setTimeout(render, 1000 / 30);
       });
 
       await stopped;
