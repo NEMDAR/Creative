@@ -1,6 +1,6 @@
-# NEMDAR Creator — Roadmap
+# NEMDAR Creative Studio — Roadmap
 
-Canonical subdomain: `creator.nemdar.tech`  
+Canonical subdomain: `creative.nemdar.tech`  
 Canonical repository target: `NEMDAR/Creative`
 
 ## Delivery rule
@@ -9,7 +9,7 @@ Each phase must produce a useful release on its own. Advanced generation must ne
 ## P0 — Foundation
 Goal: establish the codebase, schemas, rendering contracts, deployment path and execution controls.
 
-Exit gate: repo exists, app builds, editor shell opens, composition schema is versioned, and `creator.nemdar.tech` has a defined deployment route.
+Exit gate: repo exists, app builds, editor shell opens, composition schema is versioned, and `creative.nemdar.tech` has a defined deployment route.
 
 ## P1 — Simple Editor
 Goal: the first actually useful editor.
