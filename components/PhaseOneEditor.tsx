@@ -25,6 +25,7 @@ const initialProject: CreatorProject = {
 
 type MediaItem = { id: string; kind: "video" | "image"; url: string; name: string; type: string; blob: Blob; duration: number };
 type MediaState = MediaItem | null;
+type AudioTrackItem = { id: string; url: string; name: string; type: string; blob: Blob; duration: number; startTime: number; gain: number; fadeIn: number; fadeOut: number };
 
 export default function PhaseOneEditor() {
   const [project, setProject] = useState<CreatorProject>(initialProject);
@@ -34,7 +35,9 @@ export default function PhaseOneEditor() {
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
   const [duration, setDuration] = useState(0);
   const [timeline, setTimeline] = useState(createEmptyTimeline);
+  const [audioTrack, setAudioTrack] = useState<AudioTrackItem | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const mediaObjectUrls = useRef<string[]>([]);
   const pendingSeekRef = useRef<{ assetId: string; sourceTime: number } | null>(null);
@@ -50,6 +53,31 @@ export default function PhaseOneEditor() {
     videoRef.current.volume = project.volume;
     videoRef.current.muted = project.muted;
   }, [project.volume, project.muted, media]);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio || !audioTrack) return;
+
+    const relativeTime = timeline.playhead - audioTrack.startTime;
+    const active = relativeTime >= 0 && relativeTime <= audioTrack.duration;
+    if (!active) {
+      audio.pause();
+      return;
+    }
+
+    if (!audio.seeking && Math.abs(audio.currentTime - relativeTime) > 0.18) {
+      audio.currentTime = Math.max(0, Math.min(audioTrack.duration, relativeTime));
+    }
+
+    const fadeInGain = audioTrack.fadeIn > 0 ? Math.min(1, relativeTime / audioTrack.fadeIn) : 1;
+    const timeLeft = Math.max(0, audioTrack.duration - relativeTime);
+    const fadeOutGain = audioTrack.fadeOut > 0 ? Math.min(1, timeLeft / audioTrack.fadeOut) : 1;
+    audio.volume = Math.max(0, Math.min(1, audioTrack.gain * Math.min(fadeInGain, fadeOutGain)));
+
+    if (videoRef.current && !videoRef.current.paused && audio.paused) {
+      void audio.play().catch(() => undefined);
+    }
+  }, [timeline.playhead, audioTrack]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -230,6 +258,69 @@ export default function PhaseOneEditor() {
         resolve(value);
       };
       probe.onerror = () => resolve(5);
+    });
+  }
+
+  async function onAudioUpload(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file || !file.type.startsWith("audio/")) return;
+
+    const url = createObjectUrl(file);
+    const audioDuration = await probeAudioDuration(url);
+    const maxStart = Math.max(0, timeline.duration - 0.1);
+    const startTime = Math.max(0, Math.min(timeline.playhead, maxStart));
+
+    setAudioTrack({
+      id: crypto.randomUUID(),
+      url,
+      name: file.name,
+      type: file.type,
+      blob: file,
+      duration: Math.min(audioDuration, Math.max(0.1, timeline.duration || audioDuration)),
+      startTime,
+      gain: 0.8,
+      fadeIn: 0,
+      fadeOut: 0,
+    });
+    event.target.value = "";
+  }
+
+  function probeAudioDuration(url: string) {
+    return new Promise<number>((resolve) => {
+      const probe = document.createElement("audio");
+      let settled = false;
+      const finish = (value: number) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(fallback);
+        resolve(value);
+      };
+      const fallback = window.setTimeout(() => finish(5), 800);
+      probe.preload = "metadata";
+      probe.src = url;
+      probe.onloadedmetadata = () => {
+        const value = Number.isFinite(probe.duration) && probe.duration > 0 ? probe.duration : 5;
+        finish(value);
+      };
+      probe.onerror = () => finish(5);
+      probe.load();
+    });
+  }
+
+  function updateAudioTrack(patch: Partial<AudioTrackItem>) {
+    setAudioTrack((current) => {
+      if (!current) return current;
+      const next = { ...current, ...patch };
+      const maxStart = Math.max(0, timeline.duration - 0.1);
+      next.startTime = Math.max(0, Math.min(next.startTime, maxStart));
+      next.duration = Math.max(
+        0.1,
+        Math.min(next.duration, Math.max(0.1, timeline.duration - next.startTime))
+      );
+      next.gain = Math.max(0, Math.min(1, next.gain));
+      next.fadeIn = Math.max(0, Math.min(next.fadeIn, next.duration));
+      next.fadeOut = Math.max(0, Math.min(next.fadeOut, next.duration));
+      return next;
     });
   }
 
@@ -908,6 +999,7 @@ export default function PhaseOneEditor() {
           <h2>Elements</h2>
           <button className="toolButton" onClick={addText}>+ Text</button>
           <label className="toolButton fileButton">+ Logo / image<input type="file" accept="image/*" onChange={addLogo} hidden /></label>
+          <label className="toolButton fileButton">+ Music / audio<input type="file" accept="audio/*" onChange={onAudioUpload} hidden /></label>
 
           <h2>Format</h2>
           <div className="ratioGrid">
@@ -971,7 +1063,20 @@ export default function PhaseOneEditor() {
                     if (e.currentTarget.currentTime < start || e.currentTarget.currentTime >= end) {
                       e.currentTarget.currentTime = start;
                     }
+
+                    const audio = audioRef.current;
+                    if (audio && audioTrack) {
+                      const timelineTime = activeClip
+                        ? timelineTimeForClip(timeline, activeClip.id, e.currentTarget.currentTime)
+                        : timeline.playhead;
+                      const relativeTime = (timelineTime ?? timeline.playhead) - audioTrack.startTime;
+                      if (relativeTime >= 0 && relativeTime < audioTrack.duration) {
+                        audio.currentTime = relativeTime;
+                        void audio.play().catch(() => undefined);
+                      }
+                    }
                   }}
+                  onPause={() => audioRef.current?.pause()}
                   onTimeUpdate={(e) => {
                     const singleSource = mediaItems.length <= 1;
                     const activeClip =
@@ -1002,6 +1107,7 @@ export default function PhaseOneEditor() {
                 />
               )}
               {media?.kind === "image" && <img id="creative-image" src={media.url} alt="Creative source" className="mediaLayer" />}
+              {audioTrack && <audio ref={audioRef} src={audioTrack.url} preload="auto" />}
 
               {project.overlays.filter((overlay) => isOverlayActive(overlay, timeline.playhead)).map((overlay) => (
                 <div
@@ -1082,6 +1188,33 @@ export default function PhaseOneEditor() {
               </div>
             </div>
             <div className="timelineRow">
+              <div className="trackLabel">Audio</div>
+              <div className="audioTrackSurface" data-testid="audio-track">
+                {audioTrack && (
+                  <button
+                    type="button"
+                    className="audioTimingBar"
+                    data-testid="audio-track-item"
+                    data-start={audioTrack.startTime.toFixed(2)}
+                    data-duration={audioTrack.duration.toFixed(2)}
+                    style={{
+                      left: `${timeline.duration > 0 ? (audioTrack.startTime / timeline.duration) * 100 : 0}%`,
+                      width: `${timeline.duration > 0 ? (audioTrack.duration / timeline.duration) * 100 : 100}%`,
+                    }}
+                  >
+                    <strong>{audioTrack.name}</strong>
+                    <span>{Math.round(audioTrack.gain * 100)}%</span>
+                  </button>
+                )}
+                <div
+                  className="timelinePlayhead audioPlayhead"
+                  style={{
+                    left: `${timeline.duration > 0 ? (timeline.playhead / timeline.duration) * 100 : 0}%`,
+                  }}
+                />
+              </div>
+            </div>
+            <div className="timelineRow">
               <div className="trackLabel">Overlays</div>
               <div className="overlayTrack" data-testid="overlay-track">
                 {project.overlays.map((overlay) => {
@@ -1134,6 +1267,80 @@ export default function PhaseOneEditor() {
               <label>Volume<input type="range" min="0" max="1" step="0.05" value={project.volume} onChange={(e) => replaceProject((p) => ({ ...p, volume: Number(e.target.value) }))} /></label>
               <label className="check"><input type="checkbox" checked={project.muted} onChange={(e) => replaceProject((p) => ({ ...p, muted: e.target.checked }))} /> Muted</label>
             </>
+          )}
+
+          <h2>Audio track</h2>
+          {!audioTrack && <p className="hint">Add music or audio from the Elements panel.</p>}
+          {audioTrack && (
+            <div className="audioInspector" data-testid="audio-inspector">
+              <div className="clipMeta">
+                <strong>{audioTrack.name}</strong>
+                <span>audio</span>
+              </div>
+              <label>
+                Start
+                <input
+                  aria-label="Audio start"
+                  type="number"
+                  min={0}
+                  max={Math.max(0, timeline.duration - 0.1)}
+                  step="0.1"
+                  value={audioTrack.startTime}
+                  onChange={(e) => updateAudioTrack({ startTime: Number(e.target.value) })}
+                />
+              </label>
+              <label>
+                Duration
+                <input
+                  aria-label="Audio duration"
+                  type="number"
+                  min={0.1}
+                  max={Math.max(0.1, timeline.duration - audioTrack.startTime)}
+                  step="0.1"
+                  value={audioTrack.duration}
+                  onChange={(e) => updateAudioTrack({ duration: Number(e.target.value) })}
+                />
+              </label>
+              <label>
+                Gain
+                <input
+                  aria-label="Audio gain"
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={audioTrack.gain}
+                  onChange={(e) => updateAudioTrack({ gain: Number(e.target.value) })}
+                />
+              </label>
+              <div className="audioFadeGrid">
+                <label>
+                  Fade in
+                  <input
+                    aria-label="Audio fade in"
+                    type="number"
+                    min={0}
+                    max={audioTrack.duration}
+                    step="0.1"
+                    value={audioTrack.fadeIn}
+                    onChange={(e) => updateAudioTrack({ fadeIn: Number(e.target.value) })}
+                  />
+                </label>
+                <label>
+                  Fade out
+                  <input
+                    aria-label="Audio fade out"
+                    type="number"
+                    min={0}
+                    max={audioTrack.duration}
+                    step="0.1"
+                    value={audioTrack.fadeOut}
+                    onChange={(e) => updateAudioTrack({ fadeOut: Number(e.target.value) })}
+                  />
+                </label>
+              </div>
+              <button type="button" className="danger" onClick={() => setAudioTrack(null)}>Remove audio</button>
+            </div>
           )}
 
           <h2>Selected clip</h2>

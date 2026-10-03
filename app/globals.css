@@ -92,3 +92,11 @@ h2 { font-size:12px; text-transform:uppercase; letter-spacing:.1em; color:var(--
 .overlayTimingBar.active { border-color:rgba(22,139,241,.9); background:rgba(22,139,241,.22); }
 .overlayPlayhead { z-index:4; }
 .overlayTimingInspector { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:12px; padding:10px; border:1px solid var(--line); border-radius:10px; background:rgba(255,255,255,.02); }
+
+.audioTrackSurface { position:relative; min-height:38px; overflow:hidden; border:1px solid var(--line); border-radius:8px; background:#080d17; }
+.audioTimingBar { position:absolute; top:5px; bottom:5px; min-width:22px; display:flex; align-items:center; justify-content:space-between; gap:8px; overflow:hidden; border:1px solid rgba(104,211,145,.45); border-radius:6px; padding:3px 8px; background:rgba(104,211,145,.12); color:var(--text); font-size:10px; }
+.audioTimingBar strong { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.audioTimingBar span { flex:0 0 auto; color:#9fe3b7; }
+.audioPlayhead { z-index:4; }
+.audioInspector { display:flex; flex-direction:column; gap:10px; margin-bottom:16px; padding:12px; border:1px solid var(--line); border-radius:12px; background:rgba(255,255,255,.025); }
+.audioFadeGrid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }

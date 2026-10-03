@@ -10,6 +10,26 @@ const WEBM_CLIP = Buffer.from(
   "base64"
 );
 
+function createSilentWav(seconds = 2, sampleRate = 8000) {
+  const samples = Math.max(1, Math.floor(seconds * sampleRate));
+  const dataSize = samples * 2;
+  const buffer = Buffer.alloc(44 + dataSize);
+  buffer.write("RIFF", 0);
+  buffer.writeUInt32LE(36 + dataSize, 4);
+  buffer.write("WAVE", 8);
+  buffer.write("fmt ", 12);
+  buffer.writeUInt32LE(16, 16);
+  buffer.writeUInt16LE(1, 20);
+  buffer.writeUInt16LE(1, 22);
+  buffer.writeUInt32LE(sampleRate, 24);
+  buffer.writeUInt32LE(sampleRate * 2, 28);
+  buffer.writeUInt16LE(2, 32);
+  buffer.writeUInt16LE(16, 34);
+  buffer.write("data", 36);
+  buffer.writeUInt32LE(dataSize, 40);
+  return buffer;
+}
+
 test("P1 image creative can be edited, saved, exported and restored", async ({ page }) => {
   await page.goto("/");
 
@@ -262,4 +282,36 @@ test("P2 timed overlay tracks control text and logo visibility independently", a
   await expect(page.getByTestId("timeline-clock")).toHaveText("00:03.5");
   await expect(page.locator(".stage .overlay span").filter({ hasText: "Timed overlay" })).toHaveCount(0);
   await expect(page.locator('.stage .overlay img[alt="Overlay"]')).toBeVisible();
+});
+
+test("P2 audio track supports placement gain and fades", async ({ page }) => {
+  await page.goto("/");
+
+  const sourceInput = page.locator('input[accept="video/*,image/*"]');
+  await sourceInput.setInputFiles({
+    name: "audio-source.png",
+    mimeType: "image/png",
+    buffer: PNG_1X1,
+  });
+
+  const audioInput = page.locator('input[accept="audio/*"]');
+  await audioInput.setInputFiles({
+    name: "music.wav",
+    mimeType: "audio/wav",
+    buffer: createSilentWav(2),
+  });
+
+  const audioBar = page.getByTestId("audio-track-item");
+  await expect(audioBar).toBeVisible();
+  await expect(audioBar).toContainText("music.wav");
+
+  await page.getByLabel("Audio start").fill("1");
+  await page.getByLabel("Audio duration").fill("2");
+  await page.getByLabel("Audio gain").fill("0.5");
+  await page.getByLabel("Audio fade in").fill("0.4");
+  await page.getByLabel("Audio fade out").fill("0.6");
+
+  await expect(audioBar).toHaveAttribute("data-start", "1.00");
+  await expect(audioBar).toHaveAttribute("data-duration", "2.00");
+  await expect(audioBar).toContainText("50%");
 });
