@@ -1,6 +1,7 @@
 "use client";
 
 import { ChangeEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { captionCueAtTime, normalizeCaptionTrack, type CaptionCue, type CaptionLanguage, type CaptionTrack } from "../lib/editor/captions";
 import type { CreatorProject, Overlay, RatioKey, TextOverlay } from "../lib/editor/types";
 import { listPhaseTwoSnapshots, loadPhaseOneDraft, loadPhaseTwoDraft, loadPhaseTwoSnapshot, savePhaseTwoDraft, savePhaseTwoSnapshot, type HydratedPhaseTwoState, type PhaseTwoSaveInput, type PhaseTwoSnapshotSummary } from "../lib/editor/storage";
 import { buildSequentialTimeline, createEmptyTimeline, deleteTimelineClip, duplicateTimelineClip, formatTimelineTime, getMaxTransitionDuration, getNextTimelineClip, getTransitionVisualState, isCrossfadeEligible, moveTimelineClip, resolveTimelineTime, setTimelineClipTransition, setTimelinePlayhead, splitTimelineClip, timelineTimeForClip, trimTimelineClip, updateTimelineClipTransform, type ClipFitMode, type TimelineClip, type TransitionType } from "../lib/editor/timeline";
@@ -150,6 +151,11 @@ export default function PhaseOneEditor() {
   const [duration, setDuration] = useState(0);
   const [timeline, setTimeline] = useState(createEmptyTimeline);
   const [audioTrack, setAudioTrack] = useState<AudioTrackItem | null>(null);
+  const [captions, setCaptions] = useState<CaptionTrack | null>(null);
+  const [captionLanguage, setCaptionLanguage] = useState<CaptionLanguage>("auto");
+  const [captionState, setCaptionState] = useState<"idle" | "generating" | "ready" | "error">("idle");
+  const [captionError, setCaptionError] = useState<string | null>(null);
+  const [selectedCaptionId, setSelectedCaptionId] = useState<string | null>(null);
   const [timelineZoom, setTimelineZoom] = useState(1);
   const [snapEnabled, setSnapEnabled] = useState(true);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -264,6 +270,16 @@ export default function PhaseOneEditor() {
   const selectedNextClip = useMemo(
     () => (selectedClip ? getNextTimelineClip(timeline, selectedClip.id) : null),
     [timeline, selectedClip]
+  );
+
+  const selectedCaption = useMemo(
+    () => captions?.cues.find((cue) => cue.id === selectedCaptionId) ?? null,
+    [captions, selectedCaptionId]
+  );
+
+  const activeCaption = useMemo(
+    () => captionCueAtTime(captions, timeline.playhead),
+    [captions, timeline.playhead]
   );
 
   const transitionVisual = useMemo(
@@ -511,6 +527,124 @@ export default function PhaseOneEditor() {
       next.fadeOut = Math.max(0, Math.min(next.fadeOut, next.duration));
       return next;
     });
+  }
+
+  function updateCaptionCue(id: string, patch: Partial<CaptionCue>) {
+    setCaptions((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        cues: current.cues.map((cue) => {
+          if (cue.id !== id) return cue;
+          const next = { ...cue, ...patch };
+          next.startTime = Math.max(0, Math.min(next.startTime, timeline.duration));
+          next.endTime = Math.max(
+            next.startTime + 0.05,
+            Math.min(next.endTime, timeline.duration || next.endTime)
+          );
+          return next;
+        }),
+      };
+    });
+  }
+
+  function selectCaptionCue(cue: CaptionCue) {
+    setSelectedCaptionId(cue.id);
+    setTimeline((current) => setTimelinePlayhead(current, cue.startTime));
+  }
+
+  function mapTranscriptToTimeline(track: CaptionTrack): CaptionTrack {
+    const clip =
+      selectedClip?.kind === "video"
+        ? selectedClip
+        : timeline.tracks[0]?.clips.find((item) => item.kind === "video") ?? null;
+    const videoItem = clip
+      ? mediaItems.find((item) => item.id === clip.assetId && item.kind === "video") ?? null
+      : null;
+
+    if (clip && videoItem) {
+      const speed = Math.max(0.01, clip.transform.speed);
+      const sourceStart = clip.sourceStart;
+      const sourceEnd = sourceStart + clip.duration * speed;
+      const cues = track.cues
+        .map((cue) => {
+          const start = Math.max(sourceStart, cue.startTime);
+          const end = Math.min(sourceEnd, cue.endTime);
+          if (end <= start) return null;
+          return {
+            ...cue,
+            startTime: clip.timelineStart + (start - sourceStart) / speed,
+            endTime: clip.timelineStart + (end - sourceStart) / speed,
+          };
+        })
+        .filter((cue): cue is CaptionCue => Boolean(cue));
+      return normalizeCaptionTrack({ ...track, cues });
+    }
+
+    if (audioTrack) {
+      const cues = track.cues
+        .map((cue) => {
+          const start = Math.max(0, cue.startTime);
+          const end = Math.min(audioTrack.duration, cue.endTime);
+          if (end <= start) return null;
+          return {
+            ...cue,
+            startTime: audioTrack.startTime + start,
+            endTime: audioTrack.startTime + end,
+          };
+        })
+        .filter((cue): cue is CaptionCue => Boolean(cue));
+      return normalizeCaptionTrack({ ...track, cues });
+    }
+
+    return normalizeCaptionTrack(track);
+  }
+
+  async function generateCaptions() {
+    const clip =
+      selectedClip?.kind === "video"
+        ? selectedClip
+        : timeline.tracks[0]?.clips.find((item) => item.kind === "video") ?? null;
+    const videoSource = clip
+      ? mediaItems.find((item) => item.id === clip.assetId && item.kind === "video") ?? null
+      : null;
+    const source = videoSource ?? audioTrack;
+
+    if (!source) {
+      setCaptionState("error");
+      setCaptionError("Add a video or music/audio track before generating captions.");
+      return;
+    }
+
+    setCaptionState("generating");
+    setCaptionError(null);
+
+    try {
+      const form = new FormData();
+      form.append("media", source.blob, source.name);
+      form.append("language", captionLanguage);
+      form.append("duration", String(source.duration));
+
+      const response = await fetch("/api/captions/transcribe", {
+        method: "POST",
+        body: form,
+      });
+      const payload = (await response.json()) as CaptionTrack & { error?: string };
+      if (!response.ok) {
+        throw new Error(payload.error || "Caption transcription failed.");
+      }
+
+      const mapped = mapTranscriptToTimeline(payload);
+      setCaptions(mapped);
+      setCaptionLanguage(mapped.requestedLanguage ?? captionLanguage);
+      setSelectedCaptionId(mapped.cues[0]?.id ?? null);
+      setCaptionState("ready");
+    } catch (error) {
+      setCaptionState("error");
+      setCaptionError(
+        error instanceof Error ? error.message : "Unable to generate captions."
+      );
+    }
   }
 
   function selectMediaItem(item: MediaItem) {
@@ -888,6 +1022,7 @@ export default function PhaseOneEditor() {
       audioTrack: audioTrack
         ? (({ url: _url, ...track }) => track)(audioTrack)
         : null,
+      captions,
       timelineZoom,
       snapEnabled,
       selectedClipId,
@@ -916,6 +1051,10 @@ export default function PhaseOneEditor() {
     setMediaItems(restoredMediaItems);
     setTimeline(state.timeline);
     setAudioTrack(restoredAudio);
+    setCaptions(state.captions ?? null);
+    setCaptionLanguage(state.captions?.requestedLanguage ?? "auto");
+    setCaptionState(state.captions?.cues.length ? "ready" : "idle");
+    setSelectedCaptionId(state.captions?.cues[0]?.id ?? null);
     setTimelineZoom(state.timelineZoom ?? 1);
     setSnapEnabled(state.snapEnabled ?? true);
 
@@ -1023,6 +1162,7 @@ export default function PhaseOneEditor() {
       mediaItems: state.mediaItems,
       timeline: state.timeline,
       audioTrack: state.audioTrack,
+      captions: state.captions ?? null,
       timelineZoom: state.timelineZoom,
       snapEnabled: state.snapEnabled,
       selectedClipId: state.selectedClipId,
@@ -1064,7 +1204,8 @@ export default function PhaseOneEditor() {
     const hasMeaningfulState =
       mediaItems.length > 0 ||
       project.overlays.length > 0 ||
-      audioTrack !== null;
+      audioTrack !== null ||
+      captions !== null;
     if (!hasMeaningfulState) return;
 
     if (autosaveTimerRef.current !== null) {
@@ -1105,6 +1246,7 @@ export default function PhaseOneEditor() {
     mediaItems,
     timeline.tracks,
     audioTrack,
+    captions,
     timelineZoom,
     snapEnabled,
   ]);
@@ -1717,7 +1859,7 @@ export default function PhaseOneEditor() {
         <div>
           <span className="eyebrow">NEMDAR</span>
           <strong>Creative Studio</strong>
-          <span className="phaseChip">P2 server MP4 render queue</span>
+          <span className="phaseChip">P3 automatic captions</span>
         </div>
         <div className="topActions">
           <button className="ghost" onClick={undo}>Undo</button>
@@ -1954,12 +2096,21 @@ export default function PhaseOneEditor() {
                   )}
                 </div>
               ))}
+              {activeCaption && (
+                <div
+                  className="captionPreview"
+                  data-testid="caption-preview"
+                  dir={activeCaption.language === "ar" ? "rtl" : "ltr"}
+                >
+                  {activeCaption.text}
+                </div>
+              )}
             </div>
           </div>
 
           <div className="transport">
-            <span>Phase 2 target</span>
-            <strong>Timeline → Durable queue → MP4</strong>
+            <span>Phase 3 target</span>
+            <strong>Automatic timed captions → editable transcript</strong>
             {exportState === "rendering" && <span className="exportState">Local render {exportProgress}%</span>}
             {exportState === "done" && <span className="exportState success">Local export ready</span>}
             {exportState === "error" && <span className="exportState error">{exportError}</span>}
@@ -2095,6 +2246,33 @@ export default function PhaseOneEditor() {
                   </div>
                 </div>
                 <div className="timelineRow">
+                  <div className="trackLabel">Captions</div>
+                  <div className="captionTrack" data-testid="caption-track">
+                    {captions?.cues.map((cue) => (
+                      <button
+                        type="button"
+                        key={cue.id}
+                        data-testid="caption-track-item"
+                        data-language={cue.language}
+                        className={selectedCaptionId === cue.id ? "captionTimingBar active" : "captionTimingBar"}
+                        style={{
+                          left: `${timeline.duration > 0 ? (cue.startTime / timeline.duration) * 100 : 0}%`,
+                          width: `${timeline.duration > 0 ? ((cue.endTime - cue.startTime) / timeline.duration) * 100 : 100}%`,
+                        }}
+                        onClick={() => selectCaptionCue(cue)}
+                      >
+                        {cue.text}
+                      </button>
+                    ))}
+                    <div
+                      className="timelinePlayhead captionPlayhead"
+                      style={{
+                        left: `${timeline.duration > 0 ? (timeline.playhead / timeline.duration) * 100 : 0}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+                <div className="timelineRow">
                   <div className="trackLabel">Overlays</div>
                   <div className="overlayTrack" data-testid="overlay-track">
                     {project.overlays.map((overlay) => {
@@ -2202,6 +2380,107 @@ export default function PhaseOneEditor() {
               <label className="check"><input type="checkbox" checked={project.muted} onChange={(e) => replaceProject((p) => ({ ...p, muted: e.target.checked }))} /> Muted</label>
             </>
           )}
+
+          <h2>Captions</h2>
+          <div className="captionInspector" data-testid="caption-inspector">
+            <div className="captionGenerateRow">
+              <label>
+                Language
+                <select
+                  aria-label="Caption language"
+                  value={captionLanguage}
+                  onChange={(e) => setCaptionLanguage(e.target.value as CaptionLanguage)}
+                >
+                  <option value="auto">Auto detect</option>
+                  <option value="ar">Arabic</option>
+                  <option value="en">English</option>
+                </select>
+              </label>
+              <button
+                type="button"
+                className="toolButton"
+                onClick={() => void generateCaptions()}
+                disabled={captionState === "generating"}
+              >
+                {captionState === "generating" ? "Generating…" : captions ? "Regenerate captions" : "Generate captions"}
+              </button>
+            </div>
+            {captionError && <p className="captionError">{captionError}</p>}
+            {captions && (
+              <>
+                <div className="captionMeta" data-testid="caption-meta">
+                  <span>Detected: <strong>{captions.detectedLanguage}</strong></span>
+                  <span>{captions.provider} · {captions.model}</span>
+                  <span>{captions.cues.length} cues</span>
+                </div>
+                <div className="captionCueList">
+                  {captions.cues.map((cue, index) => (
+                    <button
+                      type="button"
+                      key={cue.id}
+                      className={selectedCaptionId === cue.id ? "captionCue active" : "captionCue"}
+                      onClick={() => selectCaptionCue(cue)}
+                    >
+                      <span>{index + 1}</span>
+                      <strong>{cue.text}</strong>
+                      <small>{formatTimelineTime(cue.startTime)}–{formatTimelineTime(cue.endTime)}</small>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+            {selectedCaption && (
+              <div className="captionCueEditor" data-testid="caption-cue-editor">
+                <label>
+                  Caption text
+                  <textarea
+                    aria-label="Caption text"
+                    value={selectedCaption.text}
+                    dir={selectedCaption.language === "ar" ? "rtl" : "ltr"}
+                    onChange={(e) => updateCaptionCue(selectedCaption.id, { text: e.target.value })}
+                  />
+                </label>
+                <div className="captionTimeGrid">
+                  <label>
+                    Start
+                    <input
+                      aria-label="Caption start"
+                      type="number"
+                      min={0}
+                      max={Math.max(0, selectedCaption.endTime - 0.05)}
+                      step="0.1"
+                      value={selectedCaption.startTime}
+                      onChange={(e) => updateCaptionCue(selectedCaption.id, { startTime: Number(e.target.value) })}
+                    />
+                  </label>
+                  <label>
+                    End
+                    <input
+                      aria-label="Caption end"
+                      type="number"
+                      min={selectedCaption.startTime + 0.05}
+                      max={timeline.duration}
+                      step="0.1"
+                      value={selectedCaption.endTime}
+                      onChange={(e) => updateCaptionCue(selectedCaption.id, { endTime: Number(e.target.value) })}
+                    />
+                  </label>
+                </div>
+                <label>
+                  Cue language
+                  <select
+                    aria-label="Caption cue language"
+                    value={selectedCaption.language}
+                    onChange={(e) => updateCaptionCue(selectedCaption.id, { language: e.target.value })}
+                  >
+                    <option value="ar">Arabic</option>
+                    <option value="en">English</option>
+                    <option value="und">Undetermined</option>
+                  </select>
+                </label>
+              </div>
+            )}
+          </div>
 
           <h2>Audio track</h2>
           {!audioTrack && <p className="hint">Add music or audio from the Elements panel.</p>}

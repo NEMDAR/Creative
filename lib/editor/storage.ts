@@ -1,3 +1,4 @@
+import type { CaptionTrack } from "./captions";
 import type { TimelineState } from "./timeline";
 import type { CreatorProject } from "./types";
 
@@ -41,6 +42,7 @@ export type PhaseTwoSaveInput = {
   mediaItems: PersistableMediaItem[];
   timeline: TimelineState;
   audioTrack: PersistableAudioTrack | null;
+  captions: CaptionTrack | null;
   timelineZoom: number;
   snapEnabled: boolean;
   selectedClipId: string | null;
@@ -55,6 +57,7 @@ type PersistedPhaseTwoState = {
   mediaItems: PersistedMediaItem[];
   timeline: TimelineState;
   audioTrack: PersistedAudioTrack | null;
+  captions: CaptionTrack | null;
   timelineZoom: number;
   snapEnabled: boolean;
   selectedClipId: string | null;
@@ -155,6 +158,7 @@ function toPersistedPhaseTwoState(input: PhaseTwoSaveInput): PersistedPhaseTwoSt
     audioTrack: input.audioTrack
       ? (({ blob: _blob, ...track }) => track)(input.audioTrack)
       : null,
+    captions: input.captions ?? null,
     timelineZoom: input.timelineZoom,
     snapEnabled: input.snapEnabled,
     selectedClipId: input.selectedClipId,
@@ -228,6 +232,7 @@ async function hydratePhaseTwoState(
     mediaItems,
     timeline: state.timeline,
     audioTrack,
+    captions: state.captions ?? null,
     timelineZoom: state.timelineZoom,
     snapEnabled: state.snapEnabled,
     selectedClipId: state.selectedClipId,
