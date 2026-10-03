@@ -890,11 +890,13 @@ export default function PhaseOneEditor() {
                   onLoadedMetadata={(e) => {
                     const d = e.currentTarget.duration || media.duration || 0;
                     setDuration(d);
-                    setMediaItems((current) =>
-                      current.map((item) =>
+                    setMediaItems((current) => {
+                      const stored = current.find((item) => item.id === media.id);
+                      if (!stored || Math.abs(stored.duration - d) < 0.01) return current;
+                      return current.map((item) =>
                         item.id === media.id ? { ...item, duration: d } : item
-                      )
-                    );
+                      );
+                    });
 
                     const pending = pendingSeekRef.current;
                     if (pending?.assetId === media.id) {
