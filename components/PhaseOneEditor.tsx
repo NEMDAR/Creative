@@ -4,6 +4,7 @@ import { ChangeEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointe
 import type { CreatorProject, Overlay, RatioKey, TextOverlay } from "../lib/editor/types";
 import { listPhaseTwoSnapshots, loadPhaseOneDraft, loadPhaseTwoDraft, loadPhaseTwoSnapshot, savePhaseTwoDraft, savePhaseTwoSnapshot, type HydratedPhaseTwoState, type PhaseTwoSaveInput, type PhaseTwoSnapshotSummary } from "../lib/editor/storage";
 import { buildSequentialTimeline, createEmptyTimeline, deleteTimelineClip, duplicateTimelineClip, formatTimelineTime, getMaxTransitionDuration, getNextTimelineClip, getTransitionVisualState, isCrossfadeEligible, moveTimelineClip, resolveTimelineTime, setTimelineClipTransition, setTimelinePlayhead, splitTimelineClip, timelineTimeForClip, trimTimelineClip, updateTimelineClipTransform, type ClipFitMode, type TimelineClip, type TransitionType } from "../lib/editor/timeline";
+import type { ServerRenderManifest } from "../lib/render/server-types";
 
 const RATIOS: Record<RatioKey, { w: number; h: number }> = {
   "9:16": { w: 9, h: 16 },
@@ -26,6 +27,119 @@ const initialProject: CreatorProject = {
 type MediaItem = { id: string; kind: "video" | "image"; url: string; name: string; type: string; blob: Blob; duration: number };
 type MediaState = MediaItem | null;
 type AudioTrackItem = { id: string; url: string; name: string; type: string; blob: Blob; duration: number; startTime: number; gain: number; fadeIn: number; fadeOut: number };
+type ServerRenderState = {
+  jobId: string | null;
+  status: "idle" | "queued" | "running" | "succeeded" | "failed";
+  progress: number;
+  stage: string;
+  outputUrl?: string;
+  error?: string;
+};
+
+function evenDimension(value: number) {
+  const rounded = Math.max(2, Math.round(value));
+  return rounded % 2 === 0 ? rounded : rounded + 1;
+}
+
+function renderDimensions(ratio: RatioKey) {
+  const shape = RATIOS[ratio];
+  const longSide = 1080;
+  if (shape.h >= shape.w) {
+    return {
+      width: evenDimension((longSide * shape.w) / shape.h),
+      height: longSide,
+    };
+  }
+  return {
+    width: longSide,
+    height: evenDimension((longSide * shape.h) / shape.w),
+  };
+}
+
+function canvasPngBlob(canvas: HTMLCanvasElement) {
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) resolve(blob);
+      else reject(new Error("Unable to create overlay PNG."));
+    }, "image/png");
+  });
+}
+
+function loadImageElement(src: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Unable to load overlay image."));
+    image.src = src;
+  });
+}
+
+async function rasterizeOverlayAsset(
+  overlay: Overlay,
+  outputWidth: number,
+  outputHeight: number
+) {
+  if (overlay.kind === "image") {
+    const image = await loadImageElement(overlay.src);
+    const width = Math.max(2, Math.round((overlay.width / 100) * outputWidth));
+    const height = Math.max(
+      2,
+      Math.round(width * (image.naturalHeight / Math.max(1, image.naturalWidth)))
+    );
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Unable to rasterize image overlay.");
+    ctx.globalAlpha = overlay.opacity;
+    ctx.drawImage(image, 0, 0, width, height);
+    return { blob: await canvasPngBlob(canvas), width, height };
+  }
+
+  const scale = outputWidth / 720;
+  const fontSize = Math.max(12, overlay.fontSize * scale);
+  const padding = Math.max(8, Math.ceil(fontSize * 0.35));
+  const lines = overlay.text.split(/\r?\n/);
+  const measureCanvas = document.createElement("canvas");
+  const measureCtx = measureCanvas.getContext("2d");
+  if (!measureCtx) throw new Error("Unable to rasterize text overlay.");
+  measureCtx.font = `${overlay.fontWeight} ${fontSize}px Arial, sans-serif`;
+  const maxTextWidth = Math.max(
+    1,
+    ...lines.map((line) => measureCtx.measureText(line || " ").width)
+  );
+  const lineHeight = fontSize * 1.25;
+  const width = Math.max(2, Math.ceil(maxTextWidth + padding * 2));
+  const height = Math.max(2, Math.ceil(lines.length * lineHeight + padding * 2));
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Unable to rasterize text overlay.");
+  ctx.font = `${overlay.fontWeight} ${fontSize}px Arial, sans-serif`;
+  ctx.fillStyle = overlay.color;
+  ctx.globalAlpha = overlay.opacity;
+  ctx.textBaseline = "middle";
+  ctx.textAlign = overlay.align;
+  ctx.direction = overlay.direction;
+
+  const x =
+    overlay.align === "left"
+      ? padding
+      : overlay.align === "right"
+        ? width - padding
+        : width / 2;
+  lines.forEach((line, index) => {
+    ctx.fillText(
+      line || " ",
+      x,
+      padding + lineHeight * (index + 0.5)
+    );
+  });
+
+  return { blob: await canvasPngBlob(canvas), width, height };
+}
 
 export default function PhaseOneEditor() {
   const [project, setProject] = useState<CreatorProject>(initialProject);
@@ -47,6 +161,12 @@ export default function PhaseOneEditor() {
   const [exportState, setExportState] = useState<"idle" | "rendering" | "done" | "error">("idle");
   const [exportProgress, setExportProgress] = useState(0);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [serverRender, setServerRender] = useState<ServerRenderState>({
+    jobId: null,
+    status: "idle",
+    progress: 0,
+    stage: "Ready",
+  });
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
   const [snapshots, setSnapshots] = useState<PhaseTwoSnapshotSummary[]>([]);
@@ -989,6 +1109,163 @@ export default function PhaseOneEditor() {
     snapEnabled,
   ]);
 
+  async function buildServerRenderForm() {
+    if (timeline.duration <= 0 || mediaItems.length === 0) {
+      throw new Error("Add at least one visual clip before rendering.");
+    }
+
+    const { width, height } = renderDimensions(project.ratio);
+    const form = new FormData();
+
+    const mediaManifest = mediaItems.map((item) => {
+      const field = `media:${item.id}`;
+      form.append(field, item.blob, item.name);
+      return {
+        id: item.id,
+        field,
+        kind: item.kind,
+        name: item.name,
+      };
+    });
+
+    const overlayManifest: ServerRenderManifest["overlays"] = [];
+    for (const overlay of project.overlays) {
+      const rendered = await rasterizeOverlayAsset(overlay, width, height);
+      const field = `overlay:${overlay.id}`;
+      form.append(field, rendered.blob, `${overlay.id}.png`);
+      const startTime = Math.max(0, Math.min(getOverlayStart(overlay), timeline.duration));
+      const endTime = Math.max(
+        startTime,
+        Math.min(getOverlayEnd(overlay), timeline.duration)
+      );
+      overlayManifest.push({
+        id: overlay.id,
+        field,
+        x: Math.round((overlay.x / 100) * width - rendered.width / 2),
+        y: Math.round((overlay.y / 100) * height - rendered.height / 2),
+        width: rendered.width,
+        height: rendered.height,
+        startTime,
+        endTime,
+      });
+    }
+
+    let audioManifest: ServerRenderManifest["audioTrack"] = null;
+    if (audioTrack) {
+      const field = `audio:${audioTrack.id}`;
+      form.append(field, audioTrack.blob, audioTrack.name);
+      audioManifest = {
+        id: audioTrack.id,
+        field,
+        startTime: audioTrack.startTime,
+        duration: audioTrack.duration,
+        gain: audioTrack.gain,
+        fadeIn: audioTrack.fadeIn,
+        fadeOut: audioTrack.fadeOut,
+      };
+    }
+
+    const manifest: ServerRenderManifest = {
+      schemaVersion: 1,
+      projectName: project.name,
+      output: {
+        width,
+        height,
+        fps: 30,
+      },
+      duration: timeline.duration,
+      timeline,
+      media: mediaManifest,
+      overlays: overlayManifest,
+      audioTrack: audioManifest,
+    };
+
+    form.append("manifest", JSON.stringify(manifest));
+    return form;
+  }
+
+  async function pollServerRender(jobId: string) {
+    for (let attempt = 0; attempt < 900; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 400));
+      const response = await fetch(`/api/render/jobs/${jobId}`, {
+        cache: "no-store",
+      });
+      const job = (await response.json()) as ServerRenderState & {
+        jobId: string;
+      };
+      if (!response.ok) {
+        throw new Error(job.error || "Unable to read render job.");
+      }
+
+      setServerRender({
+        jobId,
+        status: job.status,
+        progress: job.progress,
+        stage: job.stage,
+        outputUrl: job.outputUrl,
+        error: job.error,
+      });
+
+      if (job.status === "failed") {
+        throw new Error(job.error || "MP4 render failed.");
+      }
+
+      if (job.status === "succeeded" && job.outputUrl) {
+        const link = document.createElement("a");
+        link.href = job.outputUrl;
+        link.download =
+          `${project.name.replace(/[^a-z0-9-_]+/gi, "-") || "nemdar-creative"}.mp4`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        return;
+      }
+    }
+    throw new Error("MP4 render timed out.");
+  }
+
+  async function queueMp4Render() {
+    try {
+      setServerRender({
+        jobId: null,
+        status: "queued",
+        progress: 0,
+        stage: "Preparing assets",
+      });
+      const form = await buildServerRenderForm();
+      const response = await fetch("/api/render/jobs", {
+        method: "POST",
+        body: form,
+      });
+      const job = (await response.json()) as ServerRenderState & {
+        jobId?: string;
+        error?: string;
+      };
+
+      if (!response.ok || !job.jobId) {
+        throw new Error(job.error || "Unable to queue MP4 render.");
+      }
+
+      setServerRender({
+        jobId: job.jobId,
+        status: job.status,
+        progress: job.progress,
+        stage: job.stage,
+        outputUrl: job.outputUrl,
+        error: job.error,
+      });
+      await pollServerRender(job.jobId);
+    } catch (error) {
+      setServerRender((current) => ({
+        ...current,
+        status: "failed",
+        stage: "Failed",
+        error:
+          error instanceof Error ? error.message : "Unexpected MP4 render failure.",
+      }));
+    }
+  }
+
   async function exportAsset() {
     if (!media) return alert("Upload media first.");
     setExportError(null);
@@ -1440,14 +1717,28 @@ export default function PhaseOneEditor() {
         <div>
           <span className="eyebrow">NEMDAR</span>
           <strong>Creative Studio</strong>
-          <span className="phaseChip">P2 autosave & snapshots</span>
+          <span className="phaseChip">P2 server MP4 render queue</span>
         </div>
         <div className="topActions">
           <button className="ghost" onClick={undo}>Undo</button>
           <button className="ghost" onClick={redo}>Redo</button>
           <button className="ghost" onClick={loadDraft}>Load draft</button>
           <button className="ghost" onClick={saveDraft}>Save draft</button>
-          <button className="primary" onClick={exportAsset} disabled={exportState === "rendering"}>{exportState === "rendering" ? `Exporting ${exportProgress}%` : media?.kind === "video" ? "Export video" : "Export frame"}</button>
+          <button className="ghost" onClick={exportAsset} disabled={exportState === "rendering"}>{exportState === "rendering" ? `Exporting ${exportProgress}%` : media?.kind === "video" ? "Export video" : "Export frame"}</button>
+          <button
+            className="primary"
+            data-testid="export-mp4"
+            onClick={() => void queueMp4Render()}
+            disabled={
+              mediaItems.length === 0 ||
+              serverRender.status === "queued" ||
+              serverRender.status === "running"
+            }
+          >
+            {serverRender.status === "queued" || serverRender.status === "running"
+              ? `MP4 ${serverRender.progress}%`
+              : "Export MP4"}
+          </button>
         </div>
       </header>
 
@@ -1668,10 +1959,20 @@ export default function PhaseOneEditor() {
 
           <div className="transport">
             <span>Phase 2 target</span>
-            <strong>Timeline model → Playhead → Multi-clip</strong>
-            {exportState === "rendering" && <span className="exportState">Rendering {exportProgress}%</span>}
-            {exportState === "done" && <span className="exportState success">Export ready</span>}
+            <strong>Timeline → Durable queue → MP4</strong>
+            {exportState === "rendering" && <span className="exportState">Local render {exportProgress}%</span>}
+            {exportState === "done" && <span className="exportState success">Local export ready</span>}
             {exportState === "error" && <span className="exportState error">{exportError}</span>}
+            {serverRender.status !== "idle" && (
+              <span
+                className={serverRender.status === "failed" ? "serverRenderState error" : serverRender.status === "succeeded" ? "serverRenderState success" : "serverRenderState"}
+                data-testid="server-render-state"
+                data-job-id={serverRender.jobId ?? ""}
+              >
+                {serverRender.stage} · {serverRender.progress}%
+                {serverRender.error ? ` · ${serverRender.error}` : ""}
+              </span>
+            )}
           </div>
 
           <div className="timelinePanel">

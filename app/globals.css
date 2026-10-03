@@ -131,3 +131,7 @@ h2 { font-size:12px; text-transform:uppercase; letter-spacing:.1em; color:var(--
 .snapshotItem strong { font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .snapshotItem small, .snapshotItem time { color:var(--muted); font-size:9px; }
 .snapshotItem:disabled { opacity:.55; cursor:wait; }
+
+.serverRenderState { margin-left:auto; max-width:46%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted); font-size:11px; text-transform:none !important; }
+.serverRenderState.success { color:#8ad9aa; }
+.serverRenderState.error { color:#ff98a2; }

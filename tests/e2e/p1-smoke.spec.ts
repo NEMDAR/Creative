@@ -1,3 +1,4 @@
+import { stat } from "node:fs/promises";
 import { expect, test } from "@playwright/test";
 
 const PNG_1X1 = Buffer.from(
@@ -136,7 +137,7 @@ test("P1 video trim exports a timed WebM asset", async ({ page }) => {
 
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toMatch(/\.webm$/);
-  await expect(terminalState).toContainText("Export ready");
+  await expect(terminalState).toContainText("Local export ready");
 });
 
 
@@ -541,4 +542,36 @@ test("P2 autosave reloads latest draft and restores a manual snapshot", async ({
 
   await expect(page.getByLabel("Name")).toHaveValue("Version One");
   await expect(page.getByTestId("save-state")).toHaveText("Saved");
+});
+
+test("P2 durable server render queue exports a real MP4", async ({ page }) => {
+  await page.goto("/");
+
+  const sourceInput = page.locator('input[accept="video/*,image/*"]');
+  await sourceInput.setInputFiles({
+    name: "server-render-source.png",
+    mimeType: "image/png",
+    buffer: PNG_1X1,
+  });
+  await expect(page.locator("#creative-image")).toBeVisible();
+
+  const downloadPromise = page.waitForEvent("download", { timeout: 90_000 });
+  await page.getByTestId("export-mp4").click();
+
+  const renderState = page.getByTestId("server-render-state");
+  await expect(renderState).toBeVisible();
+
+  // Rendering runs on the server; editing remains interactive while the job is active.
+  await page.getByRole("button", { name: "+ Text" }).click();
+  await expect(page.getByLabel("Text")).toBeVisible();
+
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toMatch(/\.mp4$/);
+
+  const downloadedPath = await download.path();
+  if (!downloadedPath) throw new Error("MP4 download path is unavailable.");
+  const info = await stat(downloadedPath);
+  expect(info.size).toBeGreaterThan(1_000);
+
+  await expect(renderState).toContainText("Complete · 100%");
 });
