@@ -216,3 +216,42 @@ test("P2 clip editing supports reorder split trim duplicate and delete", async (
   await page.getByRole("button", { name: "Delete clip" }).click();
   await expect(clips).toHaveCount(3);
 });
+
+
+test("P2 timed overlay tracks control text and logo visibility independently", async ({ page }) => {
+  await page.goto("/");
+
+  const sourceInput = page.locator('input[accept="video/*,image/*"]');
+  await sourceInput.setInputFiles({
+    name: "timed-source.png",
+    mimeType: "image/png",
+    buffer: PNG_1X1,
+  });
+
+  await page.getByRole("button", { name: "+ Text" }).click();
+  await page.getByLabel("Text").fill("Timed overlay");
+  await page.getByLabel("Overlay start").fill("1");
+  await page.getByLabel("Overlay end").fill("2");
+
+  const logoInput = page.locator('input[accept="image/*"]');
+  await logoInput.setInputFiles({
+    name: "timed-logo.png",
+    mimeType: "image/png",
+    buffer: PNG_1X1,
+  });
+  await expect(page.getByTestId("overlay-track-item")).toHaveCount(2);
+  await page.getByLabel("Overlay start").fill("3");
+  await page.getByLabel("Overlay end").fill("4");
+
+  const surface = page.getByTestId("timeline-surface");
+  const box = await surface.boundingBox();
+  if (!box) throw new Error("Timeline surface has no layout box.");
+
+  await page.mouse.click(box.x + box.width * 0.3, box.y + box.height / 2);
+  await expect(page.locator(".stage .overlay span").filter({ hasText: "Timed overlay" })).toBeVisible();
+  await expect(page.locator('.stage .overlay img[alt="Overlay"]')).toHaveCount(0);
+
+  await page.mouse.click(box.x + box.width * 0.7, box.y + box.height / 2);
+  await expect(page.locator(".stage .overlay span").filter({ hasText: "Timed overlay" })).toHaveCount(0);
+  await expect(page.locator('.stage .overlay img[alt="Overlay"]')).toBeVisible();
+});
