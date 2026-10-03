@@ -1,9 +1,9 @@
 "use client";
 
-import { ChangeEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { CreatorProject, Overlay, RatioKey, TextOverlay } from "../lib/editor/types";
 import { loadPhaseOneDraft, savePhaseOneDraft } from "../lib/editor/storage";
-import { buildSequentialTimeline, createEmptyTimeline, deleteTimelineClip, duplicateTimelineClip, formatTimelineTime, getMaxTransitionDuration, getNextTimelineClip, getTransitionVisualState, isCrossfadeEligible, moveTimelineClip, resolveTimelineTime, setTimelineClipTransition, setTimelinePlayhead, splitTimelineClip, timelineTimeForClip, trimTimelineClip, type TimelineClip, type TransitionType } from "../lib/editor/timeline";
+import { buildSequentialTimeline, createEmptyTimeline, deleteTimelineClip, duplicateTimelineClip, formatTimelineTime, getMaxTransitionDuration, getNextTimelineClip, getTransitionVisualState, isCrossfadeEligible, moveTimelineClip, resolveTimelineTime, setTimelineClipTransition, setTimelinePlayhead, splitTimelineClip, timelineTimeForClip, trimTimelineClip, updateTimelineClipTransform, type ClipFitMode, type TimelineClip, type TransitionType } from "../lib/editor/timeline";
 
 const RATIOS: Record<RatioKey, { w: number; h: number }> = {
   "9:16": { w: 9, h: 16 },
@@ -151,6 +151,37 @@ export default function PhaseOneEditor() {
     [mediaItems, transitionVisual.secondaryClip]
   );
 
+  const activeMediaClip = useMemo(() => {
+    if (!media) return null;
+    if (selectedClip?.assetId === media.id) return selectedClip;
+    if (transitionVisual.primaryClip?.assetId === media.id) {
+      return transitionVisual.primaryClip;
+    }
+    return (
+      timeline.tracks[0]?.clips.find((clip) => clip.assetId === media.id) ?? null
+    );
+  }, [media, selectedClip, timeline, transitionVisual.primaryClip]);
+
+  useEffect(() => {
+    if (!videoRef.current) return;
+    videoRef.current.playbackRate =
+      activeMediaClip?.kind === "video" ? activeMediaClip.transform.speed : 1;
+  }, [activeMediaClip]);
+
+  function clipMediaStyle(
+    clip: TimelineClip | null,
+    opacity = 1
+  ): CSSProperties {
+    const transform = clip?.transform;
+    return {
+      opacity,
+      objectFit: transform?.fit === "fill" ? "fill" : transform?.fit ?? "cover",
+      objectPosition: `${transform?.cropX ?? 50}% ${transform?.cropY ?? 50}%`,
+      transform: `rotate(${transform?.rotation ?? 0}deg) scale(${transform?.zoom ?? 1})`,
+      transformOrigin: "center",
+    };
+  }
+
   useEffect(() => {
     const clips = timeline.tracks[0]?.clips ?? [];
     if (selectedClipId && clips.some((clip) => clip.id === selectedClipId)) return;
@@ -269,13 +300,25 @@ export default function PhaseOneEditor() {
 
     return new Promise<number>((resolve) => {
       const probe = document.createElement("video");
+      let settled = false;
+      const finish = (value: number) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(fallback);
+        resolve(value);
+      };
+      const fallback = window.setTimeout(() => finish(5), 800);
       probe.preload = "metadata";
       probe.src = url;
       probe.onloadedmetadata = () => {
-        const value = Number.isFinite(probe.duration) && probe.duration > 0 ? probe.duration : 5;
-        resolve(value);
+        const value =
+          Number.isFinite(probe.duration) && probe.duration > 0
+            ? probe.duration
+            : 5;
+        finish(value);
       };
-      probe.onerror = () => resolve(5);
+      probe.onerror = () => finish(5);
+      probe.load();
     });
   }
 
@@ -433,6 +476,15 @@ export default function PhaseOneEditor() {
         selectedClip.transitionOut?.type ?? "none",
         duration
       )
+    );
+  }
+
+  function updateSelectedClipTransform(
+    patch: Partial<TimelineClip["transform"]>
+  ) {
+    if (!selectedClip) return;
+    setTimeline((current) =>
+      updateTimelineClipTransform(current, selectedClip.id, patch)
     );
   }
 
@@ -660,7 +712,7 @@ export default function PhaseOneEditor() {
       transitionState.primaryClip?.assetId === media.id
         ? transitionState.primaryOpacity
         : 1;
-    drawCover(ctx, source, canvas.width, canvas.height);
+    drawMediaFrame(ctx, source, canvas.width, canvas.height, transitionState.primaryClip ?? activeMediaClip);
     ctx.restore();
 
     if (
@@ -677,7 +729,7 @@ export default function PhaseOneEditor() {
         await image.decode();
         ctx.save();
         ctx.globalAlpha = transitionState.secondaryOpacity;
-        drawCover(ctx, image, canvas.width, canvas.height);
+        drawMediaFrame(ctx, image, canvas.width, canvas.height, transitionState.secondaryClip);
         ctx.restore();
       }
     }
@@ -747,7 +799,7 @@ export default function PhaseOneEditor() {
     const transitionState = getTransitionVisualState(timeline, timelineTime);
     ctx.save();
     ctx.globalAlpha = transitionState.primaryOpacity;
-    drawCover(ctx, source, width, height);
+    drawMediaFrame(ctx, source, width, height, transitionState.primaryClip);
     ctx.restore();
 
     if (transitionState.blackOpacity > 0) {
@@ -796,12 +848,16 @@ export default function PhaseOneEditor() {
     const activeClip =
       timeline.tracks[0]?.clips.find((clip) => clip.id === selectedClipId) ??
       timeline.tracks[0]?.clips.find((clip) => clip.assetId === media.id);
-    const start = singleSource
-      ? Math.max(0, project.trimStart)
-      : Math.max(0, activeClip?.sourceStart ?? 0);
-    const end = singleSource
-      ? Math.min(project.trimEnd ?? duration, duration)
-      : Math.min((activeClip?.sourceStart ?? 0) + (activeClip?.duration ?? duration), duration);
+    const speed = activeClip?.transform.speed ?? 1;
+    const start = activeClip
+      ? Math.max(0, activeClip.sourceStart)
+      : Math.max(0, project.trimStart);
+    const end = activeClip
+      ? Math.min(
+          activeClip.sourceStart + activeClip.duration * speed,
+          duration
+        )
+      : Math.min(project.trimEnd ?? duration, duration);
     if (!Number.isFinite(end) || end <= start) {
       setExportState("error");
       setExportError("Trim end must be after trim start.");
@@ -884,6 +940,7 @@ export default function PhaseOneEditor() {
     const overlayImages = await loadOverlayImages();
     const originalTime = video.currentTime;
     const originalMuted = video.muted;
+    const originalPlaybackRate = video.playbackRate;
     const wasPaused = video.paused;
 
     setExportState("rendering");
@@ -899,8 +956,9 @@ export default function PhaseOneEditor() {
         recorder.onerror = () => reject(new Error("Video recording failed."));
       });
 
-      const exportDurationMs = Math.max(1, (end - start) * 1000);
+      const exportDurationMs = Math.max(1, (activeClip?.duration ?? (end - start)) * 1000);
       video.muted = true;
+      video.playbackRate = speed;
       const exportTimelineStart = activeClip?.timelineStart ?? timeline.playhead;
       drawCompositionFrame(
         ctx,
@@ -921,7 +979,11 @@ export default function PhaseOneEditor() {
             if (video.readyState >= 2) {
               const frameTimelineTime =
                 (activeClip?.timelineStart ?? 0) +
-                Math.max(0, video.currentTime - (activeClip?.sourceStart ?? start));
+                Math.max(
+                  0,
+                  (video.currentTime - (activeClip?.sourceStart ?? start)) /
+                    Math.max(0.01, speed)
+                );
               drawCompositionFrame(
                 ctx,
                 video,
@@ -933,7 +995,7 @@ export default function PhaseOneEditor() {
             }
 
             const elapsedMs = performance.now() - startedAt;
-            const desiredTime = Math.min(end, start + elapsedMs / 1000);
+            const desiredTime = Math.min(end, start + (elapsedMs / 1000) * speed);
             if (!video.seeking && Math.abs(video.currentTime - desiredTime) > 0.18) {
               video.currentTime = desiredTime;
             }
@@ -979,6 +1041,7 @@ export default function PhaseOneEditor() {
     } finally {
       isExportingRef.current = false;
       video.muted = originalMuted;
+      video.playbackRate = originalPlaybackRate;
       if (exportAudioContext) {
         await exportAudioContext.close().catch(() => undefined);
       }
@@ -1008,20 +1071,48 @@ export default function PhaseOneEditor() {
     });
   }
 
-  function drawCover(
+  function drawMediaFrame(
     ctx: CanvasRenderingContext2D,
     source: HTMLVideoElement | HTMLImageElement,
     w: number,
-    h: number
+    h: number,
+    clip: TimelineClip | null
   ) {
     const sw = source instanceof HTMLVideoElement ? source.videoWidth : source.naturalWidth;
     const sh = source instanceof HTMLVideoElement ? source.videoHeight : source.naturalHeight;
     const safeW = sw || w;
     const safeH = sh || h;
-    const scale = Math.max(w / safeW, h / safeH);
-    const dw = safeW * scale;
-    const dh = safeH * scale;
-    ctx.drawImage(source, (w - dw) / 2, (h - dh) / 2, dw, dh);
+    const transform = clip?.transform;
+    const fit = transform?.fit ?? "cover";
+    const zoom = transform?.zoom ?? 1;
+
+    let scaleX = 1;
+    let scaleY = 1;
+    if (fit === "fill") {
+      scaleX = w / safeW;
+      scaleY = h / safeH;
+    } else {
+      const scale =
+        fit === "contain"
+          ? Math.min(w / safeW, h / safeH)
+          : Math.max(w / safeW, h / safeH);
+      scaleX = scale;
+      scaleY = scale;
+    }
+
+    const dw = safeW * scaleX * zoom;
+    const dh = safeH * scaleY * zoom;
+    const cropX = (transform?.cropX ?? 50) / 100;
+    const cropY = (transform?.cropY ?? 50) / 100;
+    const dx = (w - dw) * cropX;
+    const dy = (h - dh) * cropY;
+    const rotation = ((transform?.rotation ?? 0) * Math.PI) / 180;
+
+    ctx.save();
+    ctx.translate(w / 2, h / 2);
+    ctx.rotate(rotation);
+    ctx.drawImage(source, dx - w / 2, dy - h / 2, dw, dh);
+    ctx.restore();
   }
 
   const ratio = RATIOS[project.ratio];
@@ -1115,8 +1206,18 @@ export default function PhaseOneEditor() {
                   playsInline
                   muted={project.muted}
                   onLoadedMetadata={(e) => {
-                    const d = e.currentTarget.duration || media.duration || 0;
+                    const rawDuration = e.currentTarget.duration;
+                    const d =
+                      Number.isFinite(rawDuration) && rawDuration > 0
+                        ? rawDuration
+                        : Number.isFinite(media.duration) && media.duration > 0
+                          ? media.duration
+                          : 5;
                     setDuration(d);
+                    const playbackClip =
+                      timeline.tracks[0]?.clips.find((clip) => clip.id === selectedClipId) ??
+                      timeline.tracks[0]?.clips.find((clip) => clip.assetId === media.id);
+                    e.currentTarget.playbackRate = playbackClip?.transform.speed ?? 1;
                     setMediaItems((current) => {
                       const stored = current.find((item) => item.id === media.id);
                       if (!stored || Math.abs(stored.duration - d) < 0.01) return current;
@@ -1144,10 +1245,11 @@ export default function PhaseOneEditor() {
                     const activeClip =
                       timeline.tracks[0]?.clips.find((clip) => clip.id === selectedClipId) ??
                       timeline.tracks[0]?.clips.find((clip) => clip.assetId === media.id);
-                    const start = singleSource ? project.trimStart : (activeClip?.sourceStart ?? 0);
-                    const end = singleSource
-                      ? (project.trimEnd ?? duration)
-                      : (activeClip ? activeClip.sourceStart + activeClip.duration : duration);
+                    const start = activeClip?.sourceStart ?? (singleSource ? project.trimStart : 0);
+                    const end = activeClip
+                      ? activeClip.sourceStart + activeClip.duration * activeClip.transform.speed
+                      : (singleSource ? (project.trimEnd ?? duration) : duration);
+                    e.currentTarget.playbackRate = activeClip?.transform.speed ?? 1;
                     if (e.currentTarget.currentTime < start || e.currentTarget.currentTime >= end) {
                       e.currentTarget.currentTime = start;
                     }
@@ -1170,10 +1272,10 @@ export default function PhaseOneEditor() {
                     const activeClip =
                       timeline.tracks[0]?.clips.find((clip) => clip.id === selectedClipId) ??
                       timeline.tracks[0]?.clips.find((clip) => clip.assetId === media.id);
-                    const start = singleSource ? project.trimStart : (activeClip?.sourceStart ?? 0);
-                    const end = singleSource
-                      ? (project.trimEnd ?? duration)
-                      : (activeClip ? activeClip.sourceStart + activeClip.duration : duration);
+                    const start = activeClip?.sourceStart ?? (singleSource ? project.trimStart : 0);
+                    const end = activeClip
+                      ? activeClip.sourceStart + activeClip.duration * activeClip.transform.speed
+                      : (singleSource ? (project.trimEnd ?? duration) : duration);
                     const timelineTime = activeClip
                       ? timelineTimeForClip(timeline, activeClip.id, e.currentTarget.currentTime)
                       : null;
@@ -1192,17 +1294,17 @@ export default function PhaseOneEditor() {
                     }
                   }}
                   className="mediaLayer"
-                  style={{ opacity: transitionVisual.primaryClip?.assetId === media.id ? transitionVisual.primaryOpacity : 1 }}
+                  style={clipMediaStyle(activeMediaClip, transitionVisual.primaryClip?.assetId === media.id ? transitionVisual.primaryOpacity : 1)}
                 />
               )}
-              {media?.kind === "image" && <img id="creative-image" src={media.url} alt="Creative source" className="mediaLayer" style={{ opacity: transitionVisual.primaryClip?.assetId === media.id ? transitionVisual.primaryOpacity : 1 }} />}
+              {media?.kind === "image" && <img id="creative-image" src={media.url} alt="Creative source" className="mediaLayer" style={clipMediaStyle(activeMediaClip, transitionVisual.primaryClip?.assetId === media.id ? transitionVisual.primaryOpacity : 1)} />}
               {transitionVisual.type === "crossfade" && transitionSecondaryMedia?.kind === "image" && (
                 <img
                   data-testid="transition-media-layer"
                   src={transitionSecondaryMedia.url}
                   alt="Transition source"
                   className="mediaLayer transitionMediaLayer"
-                  style={{ opacity: transitionVisual.secondaryOpacity }}
+                  style={clipMediaStyle(transitionVisual.secondaryClip, transitionVisual.secondaryOpacity)}
                 />
               )}
               {transitionVisual.blackOpacity > 0 && (
@@ -1486,7 +1588,11 @@ export default function PhaseOneEditor() {
                   min={0.1}
                   max={
                     selectedClip.sourceDuration !== null
-                      ? Math.max(0.1, selectedClip.sourceDuration - selectedClip.sourceStart)
+                      ? Math.max(
+                          0.1,
+                          (selectedClip.sourceDuration - selectedClip.sourceStart) /
+                            Math.max(0.01, selectedClip.transform.speed)
+                        )
                       : undefined
                   }
                   step="0.1"
@@ -1494,6 +1600,102 @@ export default function PhaseOneEditor() {
                   onChange={(e) => updateSelectedClipTrim("duration", Number(e.target.value))}
                 />
               </label>
+              <div className="transformInspector" data-testid="transform-inspector">
+                <label>
+                  Fit mode
+                  <select
+                    aria-label="Clip fit"
+                    value={selectedClip.transform.fit}
+                    onChange={(e) =>
+                      updateSelectedClipTransform({ fit: e.target.value as ClipFitMode })
+                    }
+                  >
+                    <option value="cover">Crop / Cover</option>
+                    <option value="contain">Fit</option>
+                    <option value="fill">Fill</option>
+                  </select>
+                </label>
+                <div className="transformGrid">
+                  <label>
+                    Crop X
+                    <input
+                      aria-label="Clip crop X"
+                      type="number"
+                      min={0}
+                      max={100}
+                      step={1}
+                      value={selectedClip.transform.cropX}
+                      onChange={(e) =>
+                        updateSelectedClipTransform({ cropX: Number(e.target.value) })
+                      }
+                    />
+                  </label>
+                  <label>
+                    Crop Y
+                    <input
+                      aria-label="Clip crop Y"
+                      type="number"
+                      min={0}
+                      max={100}
+                      step={1}
+                      value={selectedClip.transform.cropY}
+                      onChange={(e) =>
+                        updateSelectedClipTransform({ cropY: Number(e.target.value) })
+                      }
+                    />
+                  </label>
+                  <label>
+                    Zoom
+                    <input
+                      aria-label="Clip zoom"
+                      type="number"
+                      min={1}
+                      max={3}
+                      step={0.1}
+                      value={selectedClip.transform.zoom}
+                      onChange={(e) =>
+                        updateSelectedClipTransform({ zoom: Number(e.target.value) })
+                      }
+                    />
+                  </label>
+                  <label>
+                    Rotation
+                    <input
+                      aria-label="Clip rotation"
+                      type="number"
+                      min={-180}
+                      max={180}
+                      step={1}
+                      value={selectedClip.transform.rotation}
+                      onChange={(e) =>
+                        updateSelectedClipTransform({ rotation: Number(e.target.value) })
+                      }
+                    />
+                  </label>
+                </div>
+                {selectedClip.kind === "video" && (
+                  <label>
+                    Speed
+                    <select
+                      aria-label="Clip speed"
+                      value={selectedClip.transform.speed}
+                      onChange={(e) =>
+                        updateSelectedClipTransform({ speed: Number(e.target.value) })
+                      }
+                    >
+                      <option value="0.25">0.25×</option>
+                      <option value="0.5">0.5×</option>
+                      <option value="0.75">0.75×</option>
+                      <option value="1">1×</option>
+                      <option value="1.25">1.25×</option>
+                      <option value="1.5">1.5×</option>
+                      <option value="2">2×</option>
+                      <option value="3">3×</option>
+                      <option value="4">4×</option>
+                    </select>
+                  </label>
+                )}
+              </div>
               {selectedNextClip ? (
                 <div className="transitionInspector" data-testid="transition-inspector">
                   <label>

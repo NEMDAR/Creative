@@ -91,6 +91,8 @@ h2 { font-size:12px; text-transform:uppercase; letter-spacing:.1em; color:var(--
 .clipActionGrid button { border:1px solid var(--line); border-radius:8px; padding:8px; background:var(--surface-2); color:var(--text); font-size:11px; }
 .transitionInspector { display:grid; gap:8px; padding:10px; border:1px solid rgba(22,139,241,.24); border-radius:10px; background:rgba(22,139,241,.055); }
 .transitionInspector small { color:var(--muted); font-size:10px; line-height:1.4; }
+.transformInspector { display:grid; gap:8px; padding:10px; border:1px solid var(--line); border-radius:10px; background:rgba(255,255,255,.02); }
+.transformGrid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
 
 .overlayTrack { position:relative; display:block; min-height:38px; overflow:hidden; }
 .overlayTimingBar { position:absolute; top:5px; bottom:5px; min-width:16px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; border:1px solid rgba(255,255,255,.14); border-radius:6px; padding:3px 7px; background:rgba(255,255,255,.08); color:var(--text); font-size:10px; text-align:left; }

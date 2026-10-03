@@ -1,5 +1,15 @@
 export type TimelineClipKind = "video" | "image";
+export type ClipFitMode = "cover" | "contain" | "fill";
 export type TransitionType = "none" | "fade" | "crossfade";
+
+export type ClipTransform = {
+  fit: ClipFitMode;
+  cropX: number;
+  cropY: number;
+  zoom: number;
+  rotation: number;
+  speed: number;
+};
 
 export type ClipTransition = {
   type: Exclude<TransitionType, "none">;
@@ -16,6 +26,7 @@ export type TimelineClip = {
   duration: number;
   sourceDuration: number | null;
   transitionOut: ClipTransition | null;
+  transform: ClipTransform;
 };
 
 export type TimelineTrack = {
@@ -90,6 +101,14 @@ export function buildSequentialTimeline(
       duration,
       sourceDuration: input.sourceDuration ?? null,
       transitionOut: null,
+      transform: {
+        fit: "cover",
+        cropX: 50,
+        cropY: 50,
+        zoom: 1,
+        rotation: 0,
+        speed: 1,
+      },
     };
     cursor += duration;
     return clip;
@@ -134,7 +153,9 @@ export function resolveTimelineTime(
   if (!clip) return null;
   return {
     clip,
-    sourceTime: clip.sourceStart + (clamped - clip.timelineStart),
+    sourceTime:
+      clip.sourceStart +
+      (clamped - clip.timelineStart) * clip.transform.speed,
   };
 }
 
@@ -163,7 +184,8 @@ export function timelineTimeForClip(
   const clip = timeline.tracks[0]?.clips.find((item) => item.id === clipId);
   if (!clip) return null;
   return clamp(
-    clip.timelineStart + (sourceTime - clip.sourceStart),
+    clip.timelineStart +
+      (sourceTime - clip.sourceStart) / Math.max(0.01, clip.transform.speed),
     clip.timelineStart,
     clip.timelineStart + clip.duration
   );
@@ -189,7 +211,8 @@ export function trimTimelineClip(
 
     const maxSource = clip.sourceDuration ?? Number.POSITIVE_INFINITY;
     const nextStart = clamp(sourceStart, 0, Math.max(0, maxSource - 0.1));
-    const maxDuration = Math.max(0.1, maxSource - nextStart);
+    const speed = Math.max(0.01, clip.transform.speed);
+    const maxDuration = Math.max(0.1, (maxSource - nextStart) / speed);
     return {
       ...clip,
       sourceStart: nextStart,
@@ -221,7 +244,10 @@ export function splitTimelineClip(
   const right: TimelineClip = {
     ...clip,
     id: rightClipId,
-    sourceStart: clip.kind === "video" ? clip.sourceStart + offset : clip.sourceStart,
+    sourceStart:
+      clip.kind === "video"
+        ? clip.sourceStart + offset * clip.transform.speed
+        : clip.sourceStart,
     duration: clip.duration - offset,
     transitionOut: clip.transitionOut,
   };
@@ -270,6 +296,46 @@ export function moveTimelineClip(
 
   [clips[index], clips[target]] = [clips[target], clips[index]];
   return reflowTimeline(timeline, clips);
+}
+
+export function updateTimelineClipTransform(
+  timeline: TimelineState,
+  clipId: string,
+  patch: Partial<ClipTransform>
+): TimelineState {
+  const clips = timeline.tracks[0]?.clips ?? [];
+  const next = clips.map((clip) => {
+    if (clip.id !== clipId) return clip;
+
+    const previousSpeed = Math.max(0.01, clip.transform.speed);
+    const nextSpeed =
+      clip.kind === "video"
+        ? clamp(patch.speed ?? previousSpeed, 0.25, 4)
+        : 1;
+    const sourceSpan = clip.duration * previousSpeed;
+    let nextDuration =
+      clip.kind === "video" ? sourceSpan / nextSpeed : clip.duration;
+
+    if (clip.kind === "video" && clip.sourceDuration !== null) {
+      const remainingSource = Math.max(0.1, clip.sourceDuration - clip.sourceStart);
+      nextDuration = Math.min(nextDuration, remainingSource / nextSpeed);
+    }
+
+    return {
+      ...clip,
+      duration: Math.max(0.1, nextDuration),
+      transform: {
+        fit: patch.fit ?? clip.transform.fit,
+        cropX: clamp(patch.cropX ?? clip.transform.cropX, 0, 100),
+        cropY: clamp(patch.cropY ?? clip.transform.cropY, 0, 100),
+        zoom: clamp(patch.zoom ?? clip.transform.zoom, 1, 3),
+        rotation: clamp(patch.rotation ?? clip.transform.rotation, -180, 180),
+        speed: nextSpeed,
+      },
+    };
+  });
+
+  return reflowTimeline(timeline, next);
 }
 
 export function isCrossfadeEligible(

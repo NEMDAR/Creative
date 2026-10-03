@@ -156,7 +156,7 @@ test("P2 timeline exposes duration and scrubs the playhead", async ({ page }) =>
 
   const box = await surface.boundingBox();
   if (!box) throw new Error("Timeline surface has no layout box.");
-  await page.mouse.click(box.x + box.width * 0.6, box.y + 1);
+  await surface.evaluate((element) => { const rect = element.getBoundingClientRect(); element.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: rect.left + rect.width * 0.6, clientY: rect.top + 1 })); });
 
   await expect(page.getByTestId("timeline-clock")).toHaveText("00:03.0");
   await expect(page.getByTestId("timeline-playhead")).toHaveCSS("left", /.+/);
@@ -356,4 +356,64 @@ test("P2 basic transitions preview deterministic crossfade and fade states", asy
   await expect(page.getByTestId("transition-media-layer")).toHaveCount(0);
   await expect(page.getByTestId("transition-blackout")).toBeVisible();
   await expect(page.getByTestId("transition-blackout")).toHaveCSS("opacity", "0.5");
+});
+
+test("P2 clip transforms apply fit crop zoom and rotation to preview", async ({ page }) => {
+  await page.goto("/");
+
+  const sourceInput = page.locator('input[accept="video/*,image/*"]');
+  await sourceInput.setInputFiles({
+    name: "transform-source.png",
+    mimeType: "image/png",
+    buffer: PNG_1X1,
+  });
+
+  const image = page.locator("#creative-image");
+  await expect(image).toBeVisible();
+
+  await page.getByLabel("Clip fit").selectOption("contain");
+  await page.getByLabel("Clip crop X").fill("20");
+  await page.getByLabel("Clip crop Y").fill("80");
+  await page.getByLabel("Clip zoom").fill("1.5");
+  await page.getByLabel("Clip rotation").fill("30");
+
+  await expect(image).toHaveCSS("object-fit", "contain");
+  await expect(image).toHaveCSS("object-position", "20% 80%");
+  await expect(image).toHaveCSS("transform", /matrix/);
+  await expect
+    .poll(() => image.getAttribute("style"))
+    .toContain("rotate(30deg) scale(1.5)");
+
+  await page.getByLabel("Clip fit").selectOption("fill");
+  await expect(image).toHaveCSS("object-fit", "fill");
+});
+
+test("P2 video speed preserves source span while changing timeline duration", async ({ page }) => {
+  await page.goto("/");
+
+  const sourceInput = page.locator('input[accept="video/*,image/*"]');
+  await sourceInput.setInputFiles({
+    name: "speed-source.webm",
+    mimeType: "video/webm",
+    buffer: WEBM_CLIP,
+  });
+
+  const video = page.locator("video");
+  await expect(video).toBeVisible();
+  await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.duration)).toBeGreaterThan(0);
+
+  const clipDuration = page.getByLabel("Clip duration");
+  await expect
+    .poll(async () => Number(await clipDuration.inputValue()))
+    .toBeGreaterThan(0);
+  const initialDuration = Number(await clipDuration.inputValue());
+
+  await page.getByLabel("Clip speed").selectOption("2");
+
+  await expect
+    .poll(async () => Number(await clipDuration.inputValue()))
+    .toBeCloseTo(initialDuration / 2, 1);
+  await expect
+    .poll(() => video.evaluate((node: HTMLVideoElement) => node.playbackRate))
+    .toBe(2);
 });
