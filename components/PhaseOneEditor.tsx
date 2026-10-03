@@ -420,6 +420,7 @@ export default function PhaseOneEditor() {
 
     const overlayImages = await loadOverlayImages();
     const originalTime = video.currentTime;
+    const originalMuted = video.muted;
     const wasPaused = video.paused;
 
     setExportState("rendering");
@@ -436,11 +437,10 @@ export default function PhaseOneEditor() {
       });
 
       const exportDurationMs = Math.max(1, (end - start) * 1000);
-      const originalMuted = video.muted;
       video.muted = true;
       drawCompositionFrame(ctx, video, canvas.width, canvas.height, overlayImages);
       recorder.start(250);
-      await video.play();
+      void video.play().catch(() => undefined);
 
       await new Promise<void>((resolve, reject) => {
         const startedAt = performance.now();
@@ -452,6 +452,10 @@ export default function PhaseOneEditor() {
             }
 
             const elapsedMs = performance.now() - startedAt;
+            const desiredTime = Math.min(end, start + elapsedMs / 1000);
+            if (!video.seeking && Math.abs(video.currentTime - desiredTime) > 0.18) {
+              video.currentTime = desiredTime;
+            }
             const progress = Math.max(0, Math.min(1, elapsedMs / exportDurationMs));
             setExportProgress(Math.round(progress * 100));
 
@@ -493,6 +497,7 @@ export default function PhaseOneEditor() {
       setExportError(error instanceof Error ? error.message : "Video export failed.");
     } finally {
       isExportingRef.current = false;
+      video.muted = originalMuted;
       await seekVideo(video, Math.min(originalTime, duration || originalTime)).catch(() => undefined);
       if (!wasPaused) void video.play().catch(() => undefined);
     }
