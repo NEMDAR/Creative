@@ -57,9 +57,18 @@ h2 { font-size:12px; text-transform:uppercase; letter-spacing:.1em; color:var(--
 .exportState.success { color:#8ad9aa; }
 .exportState.error { color:#ff98a2; max-width:320px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .timelinePanel { padding:12px 16px 18px; background:#0b111e; display:flex; flex-direction:column; gap:8px; }
-.timelineHeader { display:flex; align-items:center; gap:8px; min-height:26px; color:var(--muted); font-size:11px; }
+.timelineHeader { display:flex; align-items:center; justify-content:space-between; gap:12px; min-height:30px; color:var(--muted); font-size:11px; }
 .timelineHeader strong { color:var(--text); font-variant-numeric:tabular-nums; }
-.timelineRow { display:grid; grid-template-columns:70px 1fr; gap:8px; align-items:center; }
+.timelineMeta { display:flex; align-items:center; gap:8px; min-width:0; }
+.timelineTools { display:flex; align-items:center; gap:6px; flex:0 0 auto; }
+.timelineTools button { min-width:28px; height:26px; border:1px solid var(--line); border-radius:7px; background:#0a1020; color:var(--muted); padding:0 7px; font-size:11px; }
+.timelineTools button:hover { color:var(--text); border-color:rgba(255,255,255,.2); }
+.timelineTools span { min-width:38px; text-align:center; color:var(--text); font-variant-numeric:tabular-nums; }
+.timelineSnap.active { color:white; border-color:rgba(22,139,241,.75); background:rgba(22,139,241,.16); }
+.timelineShortcutHint { color:var(--muted); font-size:9px; line-height:1.4; }
+.timelineViewport { overflow-x:auto; overflow-y:hidden; padding:2px 0 5px; scrollbar-width:thin; }
+.timelineCanvas { min-width:100%; display:flex; flex-direction:column; gap:8px; transition:width .12s ease; }
+.timelineRow { display:grid; grid-template-columns:70px minmax(0,1fr); gap:8px; align-items:center; min-width:0; }
 .trackLabel { font-size:11px; color:var(--muted); }
 .timelineSurface { position:relative; min-height:42px; border:1px solid var(--line); border-radius:9px; background:#080d17; overflow:hidden; cursor:crosshair; }
 .clip { border:1px solid rgba(22,139,241,.34); background:rgba(22,139,241,.12); padding:8px 10px; border-radius:8px; font-size:12px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }

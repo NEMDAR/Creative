@@ -36,6 +36,8 @@ export default function PhaseOneEditor() {
   const [duration, setDuration] = useState(0);
   const [timeline, setTimeline] = useState(createEmptyTimeline);
   const [audioTrack, setAudioTrack] = useState<AudioTrackItem | null>(null);
+  const [timelineZoom, setTimelineZoom] = useState(1);
+  const [snapEnabled, setSnapEnabled] = useState(true);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
@@ -558,11 +560,53 @@ export default function PhaseOneEditor() {
     setSelectedId(null);
   }
 
-  function scrubTimeline(event: ReactMouseEvent<HTMLDivElement>) {
+  function clampTimelineTime(value: number) {
+    return Math.max(0, Math.min(timeline.duration, value));
+  }
+
+  function snapTimelineTime(value: number) {
+    const clamped = clampTimelineTime(value);
+    if (!snapEnabled || timeline.duration <= 0) return clamped;
+
+    const snapPoints = [
+      0,
+      timeline.duration,
+      ...(timeline.tracks[0]?.clips.flatMap((clip) => [
+        clip.timelineStart,
+        clip.timelineStart + clip.duration,
+      ]) ?? []),
+      ...project.overlays.flatMap((overlay) => {
+        const end = getOverlayEnd(overlay);
+        return Number.isFinite(end)
+          ? [getOverlayStart(overlay), Math.min(end, timeline.duration)]
+          : [getOverlayStart(overlay)];
+      }),
+      ...(audioTrack
+        ? [
+            audioTrack.startTime,
+            Math.min(timeline.duration, audioTrack.startTime + audioTrack.duration),
+          ]
+        : []),
+    ];
+
+    const nearest = snapPoints.reduce(
+      (best, point) =>
+        Math.abs(point - clamped) < Math.abs(best - clamped) ? point : best,
+      snapPoints[0] ?? clamped
+    );
+    const threshold = Math.max(0.04, 0.18 / Math.max(1, timelineZoom));
+    if (Math.abs(nearest - clamped) <= threshold) {
+      return clampTimelineTime(nearest);
+    }
+
+    return clampTimelineTime(Math.round(clamped * 10) / 10);
+  }
+
+  function seekTimelineTo(rawTime: number, applySnap = true) {
     if (timeline.duration <= 0) return;
-    const rect = event.currentTarget.getBoundingClientRect();
-    const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
-    const timelineTime = timeline.duration * ratio;
+    const timelineTime = applySnap
+      ? snapTimelineTime(rawTime)
+      : clampTimelineTime(rawTime);
     const resolved = resolveTimelineTime(timeline, timelineTime);
     setTimeline((current) => setTimelinePlayhead(current, timelineTime));
 
@@ -585,6 +629,102 @@ export default function PhaseOneEditor() {
       videoRef.current.currentTime = resolved.sourceTime;
     }
   }
+
+  function scrubTimeline(event: ReactMouseEvent<HTMLDivElement>) {
+    if (timeline.duration <= 0) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+    seekTimelineTo(timeline.duration * ratio);
+  }
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const tagName = target?.tagName?.toLowerCase();
+      const isEditing =
+        target?.isContentEditable ||
+        tagName === "input" ||
+        tagName === "textarea" ||
+        tagName === "select";
+      if (isEditing) return;
+
+      if (event.code === "Space") {
+        event.preventDefault();
+        const video = videoRef.current;
+        if (!video) return;
+        if (video.paused) {
+          void video.play().catch(() => undefined);
+        } else {
+          video.pause();
+        }
+        return;
+      }
+
+      if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+        event.preventDefault();
+        const direction = event.key === "ArrowRight" ? 1 : -1;
+        const step = event.shiftKey ? 1 : 0.1;
+        seekTimelineTo(timeline.playhead + direction * step, false);
+        return;
+      }
+
+      if (event.key === "Home") {
+        event.preventDefault();
+        seekTimelineTo(0, false);
+        return;
+      }
+
+      if (event.key === "End") {
+        event.preventDefault();
+        seekTimelineTo(timeline.duration, false);
+        return;
+      }
+
+      if (!event.ctrlKey && !event.metaKey && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        setSnapEnabled((value) => !value);
+        return;
+      }
+
+      if (event.key === "+" || event.key === "=") {
+        event.preventDefault();
+        setTimelineZoom((value) => Math.min(4, Math.round((value + 0.25) * 100) / 100));
+        return;
+      }
+
+      if (event.key === "-") {
+        event.preventDefault();
+        setTimelineZoom((value) => Math.max(1, Math.round((value - 0.25) * 100) / 100));
+        return;
+      }
+
+      if (event.key === "Delete" || event.key === "Backspace") {
+        if (selectedId) {
+          event.preventDefault();
+          deleteSelected();
+          return;
+        }
+        const clipCount = timeline.tracks[0]?.clips.length ?? 0;
+        if (selectedClipId && clipCount > 1) {
+          event.preventDefault();
+          deleteSelectedClip();
+        }
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [
+    timeline,
+    selectedId,
+    selectedClipId,
+    media,
+    mediaItems,
+    snapEnabled,
+    timelineZoom,
+    project.overlays,
+    audioTrack,
+  ]);
 
   function dragOverlay(event: ReactPointerEvent<HTMLDivElement>, overlay: Overlay) {
     const stage = stageRef.current;
@@ -1359,108 +1499,159 @@ export default function PhaseOneEditor() {
 
           <div className="timelinePanel">
             <div className="timelineHeader">
-              <span>Timeline</span>
-              <strong data-testid="timeline-clock">{formatTimelineTime(timeline.playhead)}</strong>
-              <span>/ {formatTimelineTime(timeline.duration)}</span>
+              <div className="timelineMeta">
+                <span>Timeline</span>
+                <strong data-testid="timeline-clock">{formatTimelineTime(timeline.playhead)}</strong>
+                <span>/ {formatTimelineTime(timeline.duration)}</span>
+              </div>
+              <div className="timelineTools">
+                <button
+                  type="button"
+                  aria-label="Timeline zoom out"
+                  onClick={() =>
+                    setTimelineZoom((value) =>
+                      Math.max(1, Math.round((value - 0.25) * 100) / 100)
+                    )
+                  }
+                >
+                  −
+                </button>
+                <span data-testid="timeline-zoom">{Math.round(timelineZoom * 100)}%</span>
+                <button
+                  type="button"
+                  aria-label="Timeline zoom in"
+                  onClick={() =>
+                    setTimelineZoom((value) =>
+                      Math.min(4, Math.round((value + 0.25) * 100) / 100)
+                    )
+                  }
+                >
+                  +
+                </button>
+                <button
+                  type="button"
+                  aria-label="Timeline snapping"
+                  aria-pressed={snapEnabled}
+                  className={snapEnabled ? "timelineSnap active" : "timelineSnap"}
+                  onClick={() => setSnapEnabled((value) => !value)}
+                >
+                  Snap
+                </button>
+              </div>
             </div>
-            <div className="timelineRow">
-              <div className="trackLabel">Visual 1</div>
+            <div className="timelineShortcutHint">
+              Space play/pause · ←/→ 0.1s · Shift+←/→ 1s · S snap · +/- zoom
+            </div>
+            <div className="timelineViewport" data-testid="timeline-viewport">
               <div
-                className="timelineSurface"
-                data-testid="timeline-surface"
-                onClick={scrubTimeline}
+                className="timelineCanvas"
+                data-testid="timeline-canvas"
+                data-zoom={timelineZoom.toFixed(2)}
+                style={{ width: `${timelineZoom * 100}%` }}
               >
-                {timeline.tracks[0]?.clips.map((clip) => (
+                <div className="timelineRow">
+                  <div className="trackLabel">Visual 1</div>
                   <div
-                    className={selectedClipId === clip.id ? "clip timelineClip active" : "clip timelineClip"}
-                    key={clip.id}
-                    data-testid="timeline-clip"
-                    style={{
-                      left: `${timeline.duration > 0 ? (clip.timelineStart / timeline.duration) * 100 : 0}%`,
-                      width: `${timeline.duration > 0 ? (clip.duration / timeline.duration) * 100 : 0}%`,
-                    }}
-                    onClick={() => selectTimelineClip(clip)}
+                    className="timelineSurface"
+                    data-testid="timeline-surface"
+                    onClick={scrubTimeline}
                   >
-                    <strong>{clip.assetName}</strong>
-                    <span>{formatTimelineTime(clip.duration)}</span>
-                    {clip.transitionOut && (
-                      <i
-                        className="transitionBadge"
-                        data-testid="transition-badge"
-                        title={`${clip.transitionOut.type} ${clip.transitionOut.duration.toFixed(1)}s`}
+                    {timeline.tracks[0]?.clips.map((clip) => (
+                      <div
+                        className={selectedClipId === clip.id ? "clip timelineClip active" : "clip timelineClip"}
+                        key={clip.id}
+                        data-testid="timeline-clip"
+                        style={{
+                          left: `${timeline.duration > 0 ? (clip.timelineStart / timeline.duration) * 100 : 0}%`,
+                          width: `${timeline.duration > 0 ? (clip.duration / timeline.duration) * 100 : 0}%`,
+                        }}
+                        onClick={() => selectTimelineClip(clip)}
                       >
-                        {clip.transitionOut.type === "crossfade" ? "XF" : "F"}
-                      </i>
-                    )}
-                  </div>
-                ))}
-                <div
-                  className="timelinePlayhead"
-                  data-testid="timeline-playhead"
-                  style={{
-                    left: `${timeline.duration > 0 ? (timeline.playhead / timeline.duration) * 100 : 0}%`,
-                  }}
-                />
-              </div>
-            </div>
-            <div className="timelineRow">
-              <div className="trackLabel">Audio</div>
-              <div className="audioTrackSurface" data-testid="audio-track">
-                {audioTrack && (
-                  <button
-                    type="button"
-                    className="audioTimingBar"
-                    data-testid="audio-track-item"
-                    data-start={audioTrack.startTime.toFixed(2)}
-                    data-duration={audioTrack.duration.toFixed(2)}
-                    style={{
-                      left: `${timeline.duration > 0 ? (audioTrack.startTime / timeline.duration) * 100 : 0}%`,
-                      width: `${timeline.duration > 0 ? (audioTrack.duration / timeline.duration) * 100 : 100}%`,
-                    }}
-                  >
-                    <strong>{audioTrack.name}</strong>
-                    <span>{Math.round(audioTrack.gain * 100)}%</span>
-                  </button>
-                )}
-                <div
-                  className="timelinePlayhead audioPlayhead"
-                  style={{
-                    left: `${timeline.duration > 0 ? (timeline.playhead / timeline.duration) * 100 : 0}%`,
-                  }}
-                />
-              </div>
-            </div>
-            <div className="timelineRow">
-              <div className="trackLabel">Overlays</div>
-              <div className="overlayTrack" data-testid="overlay-track">
-                {project.overlays.map((overlay) => {
-                  const start = getOverlayStart(overlay);
-                  const end = Math.min(getOverlayEnd(overlay), timeline.duration || getOverlayEnd(overlay));
-                  const width = Math.max(0.1, end - start);
-                  return (
-                    <button
-                      type="button"
-                      key={overlay.id}
-                      data-testid="overlay-track-item"
-                      data-start={start.toFixed(2)}
-                      data-end={Number.isFinite(end) ? end.toFixed(2) : "open"}
-                      className={selectedId === overlay.id ? "overlayTimingBar active" : "overlayTimingBar"}
+                        <strong>{clip.assetName}</strong>
+                        <span>{formatTimelineTime(clip.duration)}</span>
+                        {clip.transitionOut && (
+                          <i
+                            className="transitionBadge"
+                            data-testid="transition-badge"
+                            title={`${clip.transitionOut.type} ${clip.transitionOut.duration.toFixed(1)}s`}
+                          >
+                            {clip.transitionOut.type === "crossfade" ? "XF" : "F"}
+                          </i>
+                        )}
+                      </div>
+                    ))}
+                    <div
+                      className="timelinePlayhead"
+                      data-testid="timeline-playhead"
                       style={{
-                        left: `${timeline.duration > 0 ? (start / timeline.duration) * 100 : 0}%`,
-                        width: `${timeline.duration > 0 ? (width / timeline.duration) * 100 : 100}%`,
+                        left: `${timeline.duration > 0 ? (timeline.playhead / timeline.duration) * 100 : 0}%`,
                       }}
-                      onClick={() => setSelectedId(overlay.id)}
-                    >
-                      {overlay.kind}
-                    </button>
-                  );
-                })}
-                <div
-                  className="timelinePlayhead overlayPlayhead"
-                  style={{
-                    left: `${timeline.duration > 0 ? (timeline.playhead / timeline.duration) * 100 : 0}%`,
-                  }}
-                />
+                    />
+                  </div>
+                </div>
+                <div className="timelineRow">
+                  <div className="trackLabel">Audio</div>
+                  <div className="audioTrackSurface" data-testid="audio-track">
+                    {audioTrack && (
+                      <button
+                        type="button"
+                        className="audioTimingBar"
+                        data-testid="audio-track-item"
+                        data-start={audioTrack.startTime.toFixed(2)}
+                        data-duration={audioTrack.duration.toFixed(2)}
+                        style={{
+                          left: `${timeline.duration > 0 ? (audioTrack.startTime / timeline.duration) * 100 : 0}%`,
+                          width: `${timeline.duration > 0 ? (audioTrack.duration / timeline.duration) * 100 : 100}%`,
+                        }}
+                      >
+                        <strong>{audioTrack.name}</strong>
+                        <span>{Math.round(audioTrack.gain * 100)}%</span>
+                      </button>
+                    )}
+                    <div
+                      className="timelinePlayhead audioPlayhead"
+                      style={{
+                        left: `${timeline.duration > 0 ? (timeline.playhead / timeline.duration) * 100 : 0}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+                <div className="timelineRow">
+                  <div className="trackLabel">Overlays</div>
+                  <div className="overlayTrack" data-testid="overlay-track">
+                    {project.overlays.map((overlay) => {
+                      const start = getOverlayStart(overlay);
+                      const end = Math.min(
+                        getOverlayEnd(overlay),
+                        timeline.duration || getOverlayEnd(overlay)
+                      );
+                      const width = Math.max(0.1, end - start);
+                      return (
+                        <button
+                          type="button"
+                          key={overlay.id}
+                          data-testid="overlay-track-item"
+                          data-start={start.toFixed(2)}
+                          data-end={Number.isFinite(end) ? end.toFixed(2) : "open"}
+                          className={selectedId === overlay.id ? "overlayTimingBar active" : "overlayTimingBar"}
+                          style={{
+                            left: `${timeline.duration > 0 ? (start / timeline.duration) * 100 : 0}%`,
+                            width: `${timeline.duration > 0 ? (width / timeline.duration) * 100 : 100}%`,
+                          }}
+                          onClick={() => setSelectedId(overlay.id)}
+                        >
+                          {overlay.kind}
+                        </button>
+                      );
+                    })}
+                    <div
+                      className="timelinePlayhead overlayPlayhead"
+                      style={{
+                        left: `${timeline.duration > 0 ? (timeline.playhead / timeline.duration) * 100 : 0}%`,
+                      }}
+                    />
+                  </div>
+                </div>
               </div>
             </div>
           </div>

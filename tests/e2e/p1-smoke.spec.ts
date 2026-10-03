@@ -417,3 +417,76 @@ test("P2 video speed preserves source span while changing timeline duration", as
     .poll(() => video.evaluate((node: HTMLVideoElement) => node.playbackRate))
     .toBe(2);
 });
+
+test("P2 timeline UX supports snapping zoom and keyboard navigation", async ({ page }) => {
+  await page.goto("/");
+
+  const sourceInput = page.locator('input[accept="video/*,image/*"]');
+  await sourceInput.setInputFiles({
+    name: "timeline-ux.png",
+    mimeType: "image/png",
+    buffer: PNG_1X1,
+  });
+
+  await expect(page.getByTestId("timeline-clock")).toHaveText("00:00.0");
+  await expect(page.getByRole("button", { name: "Timeline snapping" })).toHaveAttribute(
+    "aria-pressed",
+    "true"
+  );
+  await expect(page.getByTestId("timeline-zoom")).toHaveText("100%");
+  await expect(page.getByTestId("timeline-canvas")).toHaveAttribute("data-zoom", "1.00");
+
+  const surface = page.getByTestId("timeline-surface");
+  await surface.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    element.dispatchEvent(
+      new MouseEvent("click", {
+        bubbles: true,
+        clientX: rect.left + rect.width * 0.98,
+        clientY: rect.top + 1,
+      })
+    );
+  });
+  await expect(page.getByTestId("timeline-clock")).toHaveText("00:05.0");
+
+  await page.getByRole("button", { name: "Timeline snapping" }).click();
+  await expect(page.getByRole("button", { name: "Timeline snapping" })).toHaveAttribute(
+    "aria-pressed",
+    "false"
+  );
+
+  await surface.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    element.dispatchEvent(
+      new MouseEvent("click", {
+        bubbles: true,
+        clientX: rect.left + rect.width * 0.98,
+        clientY: rect.top + 1,
+      })
+    );
+  });
+  await expect(page.getByTestId("timeline-clock")).toHaveText("00:04.9");
+
+  await page.keyboard.press("ArrowLeft");
+  await expect(page.getByTestId("timeline-clock")).toHaveText("00:04.8");
+  await page.keyboard.press("Shift+ArrowLeft");
+  await expect(page.getByTestId("timeline-clock")).toHaveText("00:03.8");
+  await page.keyboard.press("Home");
+  await expect(page.getByTestId("timeline-clock")).toHaveText("00:00.0");
+  await page.keyboard.press("End");
+  await expect(page.getByTestId("timeline-clock")).toHaveText("00:05.0");
+
+  await page.getByRole("button", { name: "Timeline zoom in" }).click();
+  await page.getByRole("button", { name: "Timeline zoom in" }).click();
+  await expect(page.getByTestId("timeline-zoom")).toHaveText("150%");
+  await expect(page.getByTestId("timeline-canvas")).toHaveAttribute("data-zoom", "1.50");
+
+  await page.keyboard.press("-");
+  await expect(page.getByTestId("timeline-zoom")).toHaveText("125%");
+
+  await page.keyboard.press("s");
+  await expect(page.getByRole("button", { name: "Timeline snapping" })).toHaveAttribute(
+    "aria-pressed",
+    "true"
+  );
+});
