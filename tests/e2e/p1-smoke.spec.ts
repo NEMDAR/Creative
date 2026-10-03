@@ -59,8 +59,8 @@ test("P1 image creative can be edited, saved, exported and restored", async ({ p
   });
   await expect(page.locator('.overlay img[alt="Overlay"]')).toBeVisible();
 
-  await page.getByRole("button", { name: "1:1" }).click();
-  await expect(page.getByRole("button", { name: "1:1" })).toHaveClass(/active/);
+  await page.getByRole("button", { name: "1:1", exact: true }).click();
+  await expect(page.getByRole("button", { name: "1:1", exact: true })).toHaveClass(/active/);
 
   const downloadPromise = page.waitForEvent("download");
   await page.getByRole("button", { name: "Export frame" }).click();
@@ -77,7 +77,7 @@ test("P1 image creative can be edited, saved, exported and restored", async ({ p
   await expect(page.getByText("إعلان تجريبي")).toBeVisible();
   await expect(page.locator("#creative-image")).toBeVisible();
   await expect(page.locator('.overlay img[alt="Overlay"]')).toBeVisible();
-  await expect(page.getByRole("button", { name: "1:1" })).toHaveClass(/active/);
+  await expect(page.getByRole("button", { name: "1:1", exact: true })).toHaveClass(/active/);
 });
 
 
@@ -489,4 +489,56 @@ test("P2 timeline UX supports snapping zoom and keyboard navigation", async ({ p
     "aria-pressed",
     "true"
   );
+});
+
+test("P2 autosave reloads latest draft and restores a manual snapshot", async ({ page }) => {
+  await page.goto("/");
+
+  await page.getByLabel("Name").fill("Version One");
+
+  const sourceInput = page.locator('input[accept="video/*,image/*"]');
+  await sourceInput.setInputFiles({
+    name: "snapshot-source.png",
+    mimeType: "image/png",
+    buffer: PNG_1X1,
+  });
+
+  await expect(page.locator("#creative-image")).toBeVisible();
+  await expect(page.getByTestId("save-state")).toHaveText("Saved", { timeout: 5_000 });
+
+  page.once("dialog", async (dialog) => {
+    await dialog.accept();
+  });
+  await page.getByRole("button", { name: "Save draft" }).click();
+
+  const manualSnapshot = page
+    .getByTestId("snapshot-item")
+    .filter({ hasText: "Manual" })
+    .first();
+  await expect(manualSnapshot).toContainText("Version One");
+
+  const saveState = page.getByTestId("save-state");
+  const previousSavedAt = await saveState.getAttribute("data-saved-at");
+  await page.getByLabel("Name").fill("Autosaved Edit");
+  await expect
+    .poll(() => saveState.getAttribute("data-saved-at"), { timeout: 5_000 })
+    .not.toBe(previousSavedAt);
+  await expect(saveState).toHaveText("Saved");
+
+  await page.reload();
+
+  await expect(page.getByLabel("Name")).toHaveValue("Autosaved Edit", { timeout: 5_000 });
+  await expect(page.locator("#creative-image")).toBeVisible();
+  await expect(
+    page.getByTestId("snapshot-item").filter({ hasText: "Manual" }).first()
+  ).toContainText("Version One");
+
+  await page
+    .getByTestId("snapshot-item")
+    .filter({ hasText: "Manual" })
+    .first()
+    .click();
+
+  await expect(page.getByLabel("Name")).toHaveValue("Version One");
+  await expect(page.getByTestId("save-state")).toHaveText("Saved");
 });

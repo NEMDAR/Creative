@@ -2,7 +2,7 @@
 
 import { ChangeEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { CreatorProject, Overlay, RatioKey, TextOverlay } from "../lib/editor/types";
-import { loadPhaseOneDraft, savePhaseOneDraft } from "../lib/editor/storage";
+import { listPhaseTwoSnapshots, loadPhaseOneDraft, loadPhaseTwoDraft, loadPhaseTwoSnapshot, savePhaseTwoDraft, savePhaseTwoSnapshot, type HydratedPhaseTwoState, type PhaseTwoSaveInput, type PhaseTwoSnapshotSummary } from "../lib/editor/storage";
 import { buildSequentialTimeline, createEmptyTimeline, deleteTimelineClip, duplicateTimelineClip, formatTimelineTime, getMaxTransitionDuration, getNextTimelineClip, getTransitionVisualState, isCrossfadeEligible, moveTimelineClip, resolveTimelineTime, setTimelineClipTransition, setTimelinePlayhead, splitTimelineClip, timelineTimeForClip, trimTimelineClip, updateTimelineClipTransform, type ClipFitMode, type TimelineClip, type TransitionType } from "../lib/editor/timeline";
 
 const RATIOS: Record<RatioKey, { w: number; h: number }> = {
@@ -47,6 +47,12 @@ export default function PhaseOneEditor() {
   const [exportState, setExportState] = useState<"idle" | "rendering" | "done" | "error">("idle");
   const [exportProgress, setExportProgress] = useState(0);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
+  const [snapshots, setSnapshots] = useState<PhaseTwoSnapshotSummary[]>([]);
+  const [storageHydrated, setStorageHydrated] = useState(false);
+  const autosaveTimerRef = useRef<number | null>(null);
+  const lastAutoSnapshotAtRef = useRef(0);
   const undoStack = useRef<CreatorProject[]>([]);
   const redoStack = useRef<CreatorProject[]>([]);
 
@@ -754,22 +760,75 @@ export default function PhaseOneEditor() {
     window.addEventListener("pointerup", onUp);
   }
 
+  function buildPhaseTwoSaveInput(): PhaseTwoSaveInput {
+    return {
+      project,
+      mediaItems: mediaItems.map(({ url: _url, ...item }) => item),
+      timeline,
+      audioTrack: audioTrack
+        ? (({ url: _url, ...track }) => track)(audioTrack)
+        : null,
+      timelineZoom,
+      snapEnabled,
+      selectedClipId,
+      selectedOverlayId: selectedId,
+    };
+  }
+
+  async function refreshSnapshots() {
+    const nextSnapshots = await listPhaseTwoSnapshots();
+    setSnapshots(nextSnapshots);
+  }
+
+  function restorePhaseTwoState(state: HydratedPhaseTwoState) {
+    const restoredMediaItems: MediaItem[] = state.mediaItems.map((item) => ({
+      ...item,
+      url: createObjectUrl(item.blob),
+    }));
+    const restoredAudio: AudioTrackItem | null = state.audioTrack
+      ? {
+          ...state.audioTrack,
+          url: createObjectUrl(state.audioTrack.blob),
+        }
+      : null;
+
+    setProject({ ...initialProject, ...state.project });
+    setMediaItems(restoredMediaItems);
+    setTimeline(state.timeline);
+    setAudioTrack(restoredAudio);
+    setTimelineZoom(state.timelineZoom ?? 1);
+    setSnapEnabled(state.snapEnabled ?? true);
+
+    const clips = state.timeline.tracks[0]?.clips ?? [];
+    const selectedClip =
+      clips.find((clip) => clip.id === state.selectedClipId) ?? clips[0] ?? null;
+    const selectedMedia = selectedClip
+      ? restoredMediaItems.find((item) => item.id === selectedClip.assetId) ?? null
+      : restoredMediaItems[0] ?? null;
+
+    setSelectedClipId(selectedClip?.id ?? null);
+    setSelectedId(state.selectedOverlayId ?? null);
+    setMedia(selectedMedia);
+    setDuration(selectedMedia?.kind === "video" ? selectedMedia.duration : 0);
+    setLastSavedAt(state.savedAt);
+    setSaveState("saved");
+    undoStack.current = [];
+    redoStack.current = [];
+  }
+
   async function saveDraft() {
     try {
-      await savePhaseOneDraft(
-        project,
-        media
-          ? {
-              kind: media.kind,
-              name: media.name,
-              type: media.type,
-              blob: media.blob,
-            }
-          : null
-      );
-      localStorage.setItem("nemdar-creative-studio-phase1", JSON.stringify(project));
-      alert(mediaItems.length > 1 ? "Selected clip saved locally. Full multi-clip autosave arrives in P2 snapshots." : "Project and source media saved locally in this browser.");
+      setSaveState("saving");
+      const input = buildPhaseTwoSaveInput();
+      const savedAt = await savePhaseTwoDraft(input);
+      await savePhaseTwoSnapshot(input, "manual");
+      lastAutoSnapshotAtRef.current = savedAt;
+      setLastSavedAt(savedAt);
+      setSaveState("saved");
+      await refreshSnapshots();
+      alert("Project saved locally and a version snapshot was created.");
     } catch (error) {
+      setSaveState("error");
       const message = error instanceof Error ? error.message : "Unable to save the local draft.";
       alert(message);
     }
@@ -777,6 +836,14 @@ export default function PhaseOneEditor() {
 
   async function loadDraft() {
     try {
+      const phaseTwoDraft = await loadPhaseTwoDraft();
+      if (phaseTwoDraft) {
+        restorePhaseTwoState(phaseTwoDraft);
+        await refreshSnapshots();
+        alert("Latest autosaved project restored.");
+        return;
+      }
+
       const draft = await loadPhaseOneDraft();
       if (draft) {
         replaceProject(() => ({ ...initialProject, ...draft.project }));
@@ -797,6 +864,7 @@ export default function PhaseOneEditor() {
           setMediaItems([]);
         }
         setSelectedId(null);
+        alert("Legacy Phase 1 draft restored. It will migrate on the next autosave.");
         return;
       }
 
@@ -805,12 +873,121 @@ export default function PhaseOneEditor() {
       const parsed = JSON.parse(legacy) as CreatorProject;
       replaceProject(() => ({ ...initialProject, ...parsed }));
       setSelectedId(null);
-      alert("Legacy project settings restored. Save again to migrate the draft to durable browser storage.");
+      alert("Legacy project settings restored. They will migrate on the next autosave.");
     } catch (error) {
+      setSaveState("error");
       const message = error instanceof Error ? error.message : "Unable to load the local draft.";
       alert(message);
     }
   }
+
+  async function restoreSnapshot(snapshotId: string) {
+    try {
+      setSaveState("saving");
+      const snapshot = await loadPhaseTwoSnapshot(snapshotId);
+      if (!snapshot) throw new Error("Snapshot not found.");
+      restorePhaseTwoState(snapshot);
+      await savePhaseTwoDraft(buildPhaseTwoSaveInputFromHydrated(snapshot));
+      setSaveState("saved");
+    } catch (error) {
+      setSaveState("error");
+      alert(error instanceof Error ? error.message : "Unable to restore snapshot.");
+    }
+  }
+
+  function buildPhaseTwoSaveInputFromHydrated(
+    state: HydratedPhaseTwoState
+  ): PhaseTwoSaveInput {
+    return {
+      project: state.project,
+      mediaItems: state.mediaItems,
+      timeline: state.timeline,
+      audioTrack: state.audioTrack,
+      timelineZoom: state.timelineZoom,
+      snapEnabled: state.snapEnabled,
+      selectedClipId: state.selectedClipId,
+      selectedOverlayId: state.selectedOverlayId,
+    };
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const [draft, storedSnapshots] = await Promise.all([
+          loadPhaseTwoDraft(),
+          listPhaseTwoSnapshots(),
+        ]);
+        if (cancelled) return;
+
+        setSnapshots(storedSnapshots);
+        if (draft) {
+          restorePhaseTwoState(draft);
+          lastAutoSnapshotAtRef.current = draft.savedAt;
+        }
+      } catch {
+        if (!cancelled) setSaveState("error");
+      } finally {
+        if (!cancelled) setStorageHydrated(true);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!storageHydrated) return;
+
+    const hasMeaningfulState =
+      mediaItems.length > 0 ||
+      project.overlays.length > 0 ||
+      audioTrack !== null;
+    if (!hasMeaningfulState) return;
+
+    if (autosaveTimerRef.current !== null) {
+      window.clearTimeout(autosaveTimerRef.current);
+    }
+
+    autosaveTimerRef.current = window.setTimeout(() => {
+      void (async () => {
+        try {
+          setSaveState("saving");
+          const input = buildPhaseTwoSaveInput();
+          const savedAt = await savePhaseTwoDraft(input);
+          setLastSavedAt(savedAt);
+          setSaveState("saved");
+
+          const shouldSnapshot =
+            savedAt - lastAutoSnapshotAtRef.current >= 30_000;
+          if (shouldSnapshot) {
+            await savePhaseTwoSnapshot(input, "auto");
+            lastAutoSnapshotAtRef.current = savedAt;
+            await refreshSnapshots();
+          }
+        } catch {
+          setSaveState("error");
+        }
+      })();
+    }, 900);
+
+    return () => {
+      if (autosaveTimerRef.current !== null) {
+        window.clearTimeout(autosaveTimerRef.current);
+        autosaveTimerRef.current = null;
+      }
+    };
+  }, [
+    storageHydrated,
+    project,
+    mediaItems,
+    timeline.tracks,
+    audioTrack,
+    timelineZoom,
+    snapEnabled,
+  ]);
 
   async function exportAsset() {
     if (!media) return alert("Upload media first.");
@@ -1263,7 +1440,7 @@ export default function PhaseOneEditor() {
         <div>
           <span className="eyebrow">NEMDAR</span>
           <strong>Creative Studio</strong>
-          <span className="phaseChip">P2 timeline foundation</span>
+          <span className="phaseChip">P2 autosave & snapshots</span>
         </div>
         <div className="topActions">
           <button className="ghost" onClick={undo}>Undo</button>
@@ -1660,6 +1837,55 @@ export default function PhaseOneEditor() {
         <aside className="panel inspector">
           <h2>Project</h2>
           <label>Name<input value={project.name} onChange={(e) => replaceProject((p) => ({ ...p, name: e.target.value }))} /></label>
+          <div className="savePanel">
+            <div className="saveStatusRow">
+              <span className={`saveIndicator ${saveState}`} data-testid="save-state" data-saved-at={lastSavedAt ?? ""}>
+                {saveState === "saving"
+                  ? "Saving…"
+                  : saveState === "saved"
+                    ? "Saved"
+                    : saveState === "error"
+                      ? "Save error"
+                      : "Not saved yet"}
+              </span>
+              {lastSavedAt && (
+                <time>
+                  {new Date(lastSavedAt).toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    second: "2-digit",
+                  })}
+                </time>
+              )}
+            </div>
+            <small>Autosaves about 0.9s after edits. Manual Save draft also creates a restorable version.</small>
+          </div>
+
+          <h2>Versions</h2>
+          <div className="snapshotList" data-testid="snapshot-list">
+            {snapshots.length === 0 && <p className="hint">No version snapshots yet.</p>}
+            {snapshots.map((snapshot) => (
+              <button
+                type="button"
+                key={snapshot.id}
+                className="snapshotItem"
+                data-testid="snapshot-item"
+                disabled={saveState === "saving"}
+                onClick={() => void restoreSnapshot(snapshot.id)}
+              >
+                <span>
+                  <strong>{snapshot.projectName}</strong>
+                  <small>{snapshot.reason === "manual" ? "Manual" : "Auto"} · {snapshot.mediaCount} asset{snapshot.mediaCount === 1 ? "" : "s"}</small>
+                </span>
+                <time>
+                  {new Date(snapshot.savedAt).toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </time>
+              </button>
+            ))}
+          </div>
           {mediaItems.length <= 1 && media?.kind === "video" && (
             <>
               <h2>Video</h2>

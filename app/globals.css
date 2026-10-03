@@ -116,3 +116,18 @@ h2 { font-size:12px; text-transform:uppercase; letter-spacing:.1em; color:var(--
 .audioPlayhead { z-index:4; }
 .audioInspector { display:flex; flex-direction:column; gap:10px; margin-bottom:16px; padding:12px; border:1px solid var(--line); border-radius:12px; background:rgba(255,255,255,.025); }
 .audioFadeGrid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+
+.savePanel { display:flex; flex-direction:column; gap:6px; margin-bottom:12px; padding:10px; border:1px solid var(--line); border-radius:10px; background:rgba(255,255,255,.02); }
+.saveStatusRow { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.saveStatusRow time { color:var(--muted); font-size:10px; font-variant-numeric:tabular-nums; }
+.savePanel > small { color:var(--muted); font-size:10px; line-height:1.4; }
+.saveIndicator { font-size:11px; font-weight:700; }
+.saveIndicator.saving { color:#f5d06f; }
+.saveIndicator.saved { color:#8ad9aa; }
+.saveIndicator.error { color:#ff98a2; }
+.snapshotList { display:flex; flex-direction:column; gap:7px; margin-bottom:14px; }
+.snapshotItem { display:flex; align-items:center; justify-content:space-between; gap:10px; width:100%; padding:9px 10px; border:1px solid var(--line); border-radius:9px; background:var(--surface-2); color:var(--text); text-align:left; }
+.snapshotItem > span { display:flex; flex-direction:column; gap:3px; min-width:0; }
+.snapshotItem strong { font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.snapshotItem small, .snapshotItem time { color:var(--muted); font-size:9px; }
+.snapshotItem:disabled { opacity:.55; cursor:wait; }
