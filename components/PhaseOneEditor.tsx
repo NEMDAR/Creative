@@ -1,8 +1,9 @@
 "use client";
 
-import { ChangeEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { CreatorProject, Overlay, RatioKey, TextOverlay } from "../lib/editor/types";
 import { loadPhaseOneDraft, savePhaseOneDraft } from "../lib/editor/storage";
+import { buildSingleClipTimeline, createEmptyTimeline, formatTimelineTime, setTimelinePlayhead, timelineToSourceTime } from "../lib/editor/timeline";
 
 const RATIOS: Record<RatioKey, { w: number; h: number }> = {
   "9:16": { w: 9, h: 16 },
@@ -29,6 +30,7 @@ export default function PhaseOneEditor() {
   const [media, setMedia] = useState<MediaState>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [duration, setDuration] = useState(0);
+  const [timeline, setTimeline] = useState(createEmptyTimeline);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const mediaObjectUrls = useRef<string[]>([]);
@@ -53,6 +55,40 @@ export default function PhaseOneEditor() {
       video.currentTime = project.trimStart;
     }
   }, [project.trimStart, project.trimEnd, duration, media]);
+
+  useEffect(() => {
+    if (!media) {
+      setTimeline(createEmptyTimeline());
+      return;
+    }
+
+    if (media.kind === "image") {
+      setTimeline((current) =>
+        buildSingleClipTimeline({
+          assetName: media.name,
+          kind: "image",
+          duration: 5,
+          playhead: current.playhead,
+        })
+      );
+      return;
+    }
+
+    const end = project.trimEnd ?? duration;
+    const clipDuration = Math.max(0, end - project.trimStart);
+    if (!duration || clipDuration <= 0) return;
+
+    setTimeline((current) =>
+      buildSingleClipTimeline({
+        assetName: media.name,
+        kind: "video",
+        sourceStart: project.trimStart,
+        sourceDuration: duration,
+        duration: clipDuration,
+        playhead: current.playhead,
+      })
+    );
+  }, [media, duration, project.trimStart, project.trimEnd]);
 
   const selected = useMemo(
     () => project.overlays.find((overlay) => overlay.id === selectedId) ?? null,
@@ -161,6 +197,21 @@ export default function PhaseOneEditor() {
     if (!selectedId) return;
     replaceProject((p) => ({ ...p, overlays: p.overlays.filter((o) => o.id !== selectedId) }));
     setSelectedId(null);
+  }
+
+  function scrubTimeline(event: ReactMouseEvent<HTMLDivElement>) {
+    if (timeline.duration <= 0) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+    const timelineTime = timeline.duration * ratio;
+    setTimeline((current) => setTimelinePlayhead(current, timelineTime));
+
+    if (media?.kind === "video" && videoRef.current) {
+      const sourceTime = timelineToSourceTime(timeline, timelineTime);
+      if (sourceTime !== null) {
+        videoRef.current.currentTime = sourceTime;
+      }
+    }
   }
 
   function dragOverlay(event: ReactPointerEvent<HTMLDivElement>, overlay: Overlay) {
@@ -581,7 +632,7 @@ export default function PhaseOneEditor() {
         <div>
           <span className="eyebrow">NEMDAR</span>
           <strong>Creative Studio</strong>
-          <span className="phaseChip">P0/P1 bootstrap</span>
+          <span className="phaseChip">P2 timeline foundation</span>
         </div>
         <div className="topActions">
           <button className="ghost" onClick={undo}>Undo</button>
@@ -645,9 +696,12 @@ export default function PhaseOneEditor() {
                   }}
                   onTimeUpdate={(e) => {
                     const end = project.trimEnd ?? duration;
+                    const timelineTime = Math.max(0, e.currentTarget.currentTime - project.trimStart);
+                    setTimeline((current) => setTimelinePlayhead(current, timelineTime));
                     if (!isExportingRef.current && end > project.trimStart && e.currentTarget.currentTime >= end) {
                       e.currentTarget.pause();
                       e.currentTarget.currentTime = project.trimStart;
+                      setTimeline((current) => setTimelinePlayhead(current, 0));
                     }
                   }}
                   className="mediaLayer"
@@ -689,18 +743,47 @@ export default function PhaseOneEditor() {
           </div>
 
           <div className="transport">
-            <span>Phase 1 target</span>
-            <strong>Upload → Text → Logo → 9:16 → Trim → Export</strong>
+            <span>Phase 2 target</span>
+            <strong>Timeline model → Playhead → Multi-clip</strong>
             {exportState === "rendering" && <span className="exportState">Rendering {exportProgress}%</span>}
             {exportState === "done" && <span className="exportState success">Export ready</span>}
             {exportState === "error" && <span className="exportState error">{exportError}</span>}
           </div>
 
-          <div className="miniTimeline">
-            <div className="trackLabel">Source</div>
-            <div className="clip">{media?.name || "No media selected"}</div>
-            <div className="trackLabel">Overlays</div>
-            <div className="overlayTrack">{project.overlays.map((o) => <span key={o.id}>{o.kind}</span>)}</div>
+          <div className="timelinePanel">
+            <div className="timelineHeader">
+              <span>Timeline</span>
+              <strong data-testid="timeline-clock">{formatTimelineTime(timeline.playhead)}</strong>
+              <span>/ {formatTimelineTime(timeline.duration)}</span>
+            </div>
+            <div className="timelineRow">
+              <div className="trackLabel">Visual 1</div>
+              <div
+                className="timelineSurface"
+                data-testid="timeline-surface"
+                onClick={scrubTimeline}
+              >
+                {timeline.tracks[0]?.clips.map((clip) => (
+                  <div className="clip timelineClip" key={clip.id}>
+                    <strong>{clip.assetName}</strong>
+                    <span>{formatTimelineTime(clip.duration)}</span>
+                  </div>
+                ))}
+                <div
+                  className="timelinePlayhead"
+                  data-testid="timeline-playhead"
+                  style={{
+                    left: `${timeline.duration > 0 ? (timeline.playhead / timeline.duration) * 100 : 0}%`,
+                  }}
+                />
+              </div>
+            </div>
+            <div className="timelineRow">
+              <div className="trackLabel">Overlays</div>
+              <div className="overlayTrack">
+                {project.overlays.map((o) => <span key={o.id}>{o.kind}</span>)}
+              </div>
+            </div>
           </div>
         </section>
 
