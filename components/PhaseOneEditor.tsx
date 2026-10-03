@@ -248,7 +248,6 @@ export default function PhaseOneEditor() {
 
   function selectTimelineClip(clip: TimelineClip) {
     setSelectedClipId(clip.id);
-    setTimeline((current) => setTimelinePlayhead(current, clip.timelineStart));
     const item = mediaItems.find((candidate) => candidate.id === clip.assetId);
     if (!item) return;
 
@@ -1094,6 +1093,8 @@ export default function PhaseOneEditor() {
                       type="button"
                       key={overlay.id}
                       data-testid="overlay-track-item"
+                      data-start={start.toFixed(2)}
+                      data-end={Number.isFinite(end) ? end.toFixed(2) : "open"}
                       className={selectedId === overlay.id ? "overlayTimingBar active" : "overlayTimingBar"}
                       style={{
                         left: `${timeline.duration > 0 ? (start / timeline.duration) * 100 : 0}%`,
