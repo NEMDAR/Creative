@@ -401,9 +401,39 @@ export default function PhaseOneEditor() {
 
     const canvasStream = canvas.captureStream(30);
     const captureVideo = video as HTMLVideoElement & { captureStream?: () => MediaStream };
+    let exportAudioContext: AudioContext | null = null;
+
     if (!project.muted && captureVideo.captureStream) {
-      const sourceStream = captureVideo.captureStream();
-      sourceStream.getAudioTracks().forEach((track) => canvasStream.addTrack(track));
+      try {
+        const sourceStream = captureVideo.captureStream();
+        if (sourceStream.getAudioTracks().length > 0) {
+          exportAudioContext = new AudioContext();
+          const sourceNode = exportAudioContext.createMediaStreamSource(sourceStream);
+          const gainNode = exportAudioContext.createGain();
+          const destinationNode = exportAudioContext.createMediaStreamDestination();
+
+          gainNode.gain.value = project.volume;
+          sourceNode.connect(gainNode);
+          gainNode.connect(destinationNode);
+
+          if (exportAudioContext.state === "suspended") {
+            await exportAudioContext.resume();
+          }
+
+          destinationNode.stream
+            .getAudioTracks()
+            .forEach((track) => canvasStream.addTrack(track));
+        }
+      } catch (error) {
+        if (exportAudioContext) {
+          await exportAudioContext.close().catch(() => undefined);
+        }
+        setExportState("error");
+        setExportError(
+          error instanceof Error ? error.message : "Unable to prepare export audio."
+        );
+        return;
+      }
     }
 
     const mimeType = [
@@ -498,6 +528,9 @@ export default function PhaseOneEditor() {
     } finally {
       isExportingRef.current = false;
       video.muted = originalMuted;
+      if (exportAudioContext) {
+        await exportAudioContext.close().catch(() => undefined);
+      }
       await seekVideo(video, Math.min(originalTime, duration || originalTime)).catch(() => undefined);
       if (!wasPaused) void video.play().catch(() => undefined);
     }
