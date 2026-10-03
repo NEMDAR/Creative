@@ -52,12 +52,12 @@ export default function PhaseOneEditor() {
 
   useEffect(() => {
     const video = videoRef.current;
-    if (!video || media?.kind !== "video") return;
+    if (!video || media?.kind !== "video" || mediaItems.length > 1) return;
     const trimEnd = project.trimEnd ?? duration;
     if (video.currentTime < project.trimStart || video.currentTime > trimEnd) {
       video.currentTime = project.trimStart;
     }
-  }, [project.trimStart, project.trimEnd, duration, media]);
+  }, [project.trimStart, project.trimEnd, duration, media, mediaItems.length]);
 
   useEffect(() => {
     if (mediaItems.length === 0) {
@@ -799,7 +799,7 @@ export default function PhaseOneEditor() {
           <div className="stageWrap">
             <div ref={stageRef} className="stage" style={{ aspectRatio: `${ratio.w}/${ratio.h}` }}>
               {!media && <div className="emptyStage"><b>Drop in your first creative</b><span>Video + text + logo + social ratio</span></div>}
-              {mediaItems.length <= 1 && media?.kind === "video" && (
+              {media?.kind === "video" && (
                 <video
                   ref={videoRef}
                   src={media.url}
@@ -950,7 +950,7 @@ export default function PhaseOneEditor() {
         <aside className="panel inspector">
           <h2>Project</h2>
           <label>Name<input value={project.name} onChange={(e) => replaceProject((p) => ({ ...p, name: e.target.value }))} /></label>
-          {media?.kind === "video" && (
+          {mediaItems.length <= 1 && media?.kind === "video" && (
             <>
               <h2>Video</h2>
               <label>Trim start<input type="number" min={0} max={project.trimEnd ?? duration} step="0.1" value={project.trimStart} onChange={(e) => {
