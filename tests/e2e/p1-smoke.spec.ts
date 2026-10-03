@@ -136,7 +136,7 @@ test("P2 timeline exposes duration and scrubs the playhead", async ({ page }) =>
 
   const box = await surface.boundingBox();
   if (!box) throw new Error("Timeline surface has no layout box.");
-  await page.mouse.click(box.x + box.width * 0.6, box.y + box.height / 2);
+  await page.mouse.click(box.x + box.width * 0.6, box.y + 1);
 
   await expect(page.getByTestId("timeline-clock")).toHaveText("00:03.0");
   await expect(page.getByTestId("timeline-playhead")).toHaveCSS("left", /.+/);
@@ -201,7 +201,7 @@ test("P2 clip editing supports reorder split trim duplicate and delete", async (
   const surface = page.getByTestId("timeline-surface");
   const box = await surface.boundingBox();
   if (!box) throw new Error("Timeline surface has no layout box.");
-  await page.mouse.click(box.x + box.width * 0.75, box.y + box.height / 2);
+  await page.mouse.click(box.x + box.width * 0.75, box.y + 1);
   await expect(page.getByTestId("timeline-clock")).toHaveText("00:07.5");
 
   await page.getByRole("button", { name: "Split at playhead" }).click();
@@ -253,12 +253,12 @@ test("P2 timed overlay tracks control text and logo visibility independently", a
   const box = await surface.boundingBox();
   if (!box) throw new Error("Timeline surface has no layout box.");
 
-  await page.mouse.click(box.x + box.width * 0.3, box.y + box.height / 2);
+  await page.mouse.click(box.x + box.width * 0.3, box.y + 1);
   await expect(page.getByTestId("timeline-clock")).toHaveText("00:01.5");
   await expect(page.locator(".stage .overlay span").filter({ hasText: "Timed overlay" })).toBeVisible();
   await expect(page.locator('.stage .overlay img[alt="Overlay"]')).toHaveCount(0);
 
-  await page.mouse.click(box.x + box.width * 0.7, box.y + box.height / 2);
+  await page.mouse.click(box.x + box.width * 0.7, box.y + 1);
   await expect(page.getByTestId("timeline-clock")).toHaveText("00:03.5");
   await expect(page.locator(".stage .overlay span").filter({ hasText: "Timed overlay" })).toHaveCount(0);
   await expect(page.locator('.stage .overlay img[alt="Overlay"]')).toBeVisible();
