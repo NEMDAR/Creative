@@ -19,14 +19,15 @@ Implemented in this starter:
 - Arabic/RTL support.
 - Social ratio presets.
 - Basic trim and volume controls in project state/preview.
-- Local draft settings.
-- Current-frame PNG export.
+- Durable local project + source-media persistence via IndexedDB.
+- Undo/redo and trim-aware video preview.
+- PNG export for image creatives.
+- Timed local WebM video export with text/logo overlays and progress/error state.
 - Provider and render contracts for later phases.
 - Full P0–P7 roadmap and card index.
 
 Not yet complete:
-- Timed video export/MP4 rendering.
-- Durable uploaded-media persistence.
+- Production server-side MP4 rendering/transcoding.
 - Multi-clip timeline.
 - AI providers.
 - Production deployment.

@@ -17,7 +17,7 @@ button { cursor: pointer; }
 .topbar > div { display:flex; align-items:center; gap:10px; }
 .eyebrow { font-size:11px; letter-spacing:.18em; color:var(--muted); }
 .phaseChip { border:1px solid var(--line); border-radius:999px; padding:5px 9px; color:var(--muted); font-size:11px; }
-.topActions button { border:1px solid var(--line); border-radius:10px; padding:9px 12px; }
+.topActions button { border:1px solid var(--line); border-radius:10px; padding:9px 12px; }\n.topActions button:disabled { cursor:wait; opacity:.72; }
 .ghost { background:transparent; color:var(--text); }
 .primary { background:var(--accent); color:white; border-color:transparent !important; }
 .workspace { display:grid; grid-template-columns:260px minmax(420px,1fr) 290px; min-height:calc(100vh - 64px); }
@@ -44,7 +44,7 @@ h2 { font-size:12px; text-transform:uppercase; letter-spacing:.1em; color:var(--
 .overlay span { display:block; white-space:pre-wrap; min-width:80px; }
 .transport { border-top:1px solid var(--line); border-bottom:1px solid var(--line); padding:11px 16px; display:flex; gap:12px; align-items:center; background:var(--surface); }
 .transport span { color:var(--muted); font-size:11px; text-transform:uppercase; }
-.transport strong { font-size:12px; }
+.transport strong { font-size:12px; }\n.exportState { margin-left:auto; font-size:11px; color:var(--muted); }\n.exportState.success { color:#8ad9aa; }\n.exportState.error { color:#ff98a2; max-width:320px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .miniTimeline { padding:13px 16px 18px; background:#0b111e; display:grid; grid-template-columns:70px 1fr; gap:8px; align-items:center; }
 .trackLabel { font-size:11px; color:var(--muted); }
 .clip { border:1px solid rgba(22,139,241,.34); background:rgba(22,139,241,.12); padding:8px 10px; border-radius:8px; font-size:12px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }

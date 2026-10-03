@@ -2,6 +2,7 @@
 
 import { ChangeEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { CreatorProject, Overlay, RatioKey, TextOverlay } from "../lib/editor/types";
+import { loadPhaseOneDraft, savePhaseOneDraft } from "../lib/editor/storage";
 
 const RATIOS: Record<RatioKey, { w: number; h: number }> = {
   "9:16": { w: 9, h: 16 },
@@ -21,7 +22,7 @@ const initialProject: CreatorProject = {
   overlays: [],
 };
 
-type MediaState = { kind: "video" | "image"; url: string; name: string } | null;
+type MediaState = { kind: "video" | "image"; url: string; name: string; type: string; blob: Blob } | null;
 
 export default function PhaseOneEditor() {
   const [project, setProject] = useState<CreatorProject>(initialProject);
@@ -31,6 +32,10 @@ export default function PhaseOneEditor() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const mediaObjectUrls = useRef<string[]>([]);
+  const isExportingRef = useRef(false);
+  const [exportState, setExportState] = useState<"idle" | "rendering" | "done" | "error">("idle");
+  const [exportProgress, setExportProgress] = useState(0);
+  const [exportError, setExportError] = useState<string | null>(null);
   const undoStack = useRef<CreatorProject[]>([]);
   const redoStack = useRef<CreatorProject[]>([]);
 
@@ -87,7 +92,7 @@ export default function PhaseOneEditor() {
     });
   }
 
-  function createObjectUrl(file: File) {
+  function createObjectUrl(file: Blob) {
     const url = URL.createObjectURL(file);
     mediaObjectUrls.current.push(url);
     return url;
@@ -98,7 +103,7 @@ export default function PhaseOneEditor() {
     if (!file) return;
     const kind = file.type.startsWith("video/") ? "video" : file.type.startsWith("image/") ? "image" : null;
     if (!kind) return alert("Please select a video or image file.");
-    setMedia({ kind, url: createObjectUrl(file), name: file.name });
+    setMedia({ kind, url: createObjectUrl(file), name: file.name, type: file.type, blob: file });
     setDuration(0);
     replaceProject((p) => ({ ...p, trimStart: 0, trimEnd: null }));
   }
@@ -186,21 +191,69 @@ export default function PhaseOneEditor() {
     window.addEventListener("pointerup", onUp);
   }
 
-  function saveDraft() {
+  async function saveDraft() {
     try {
+      await savePhaseOneDraft(
+        project,
+        media
+          ? {
+              kind: media.kind,
+              name: media.name,
+              type: media.type,
+              blob: media.blob,
+            }
+          : null
+      );
       localStorage.setItem("nemdar-creative-studio-phase1", JSON.stringify(project));
-      alert("Project settings and overlays saved locally. Re-select the source media after a browser restart.");
-    } catch {
-      alert("This draft is too large for local browser storage. Use a smaller logo or remove large image overlays.");
+      alert("Project and source media saved locally in this browser.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to save the local draft.";
+      alert(message);
     }
   }
 
-  function loadDraft() {
-    const raw = localStorage.getItem("nemdar-creative-studio-phase1");
-    if (!raw) return alert("No local draft found.");
-    const parsed = JSON.parse(raw) as CreatorProject;
-    replaceProject(() => ({ ...initialProject, ...parsed }));
-    setSelectedId(null);
+  async function loadDraft() {
+    try {
+      const draft = await loadPhaseOneDraft();
+      if (draft) {
+        replaceProject(() => ({ ...initialProject, ...draft.project }));
+        if (draft.media) {
+          setMedia({
+            kind: draft.media.kind,
+            name: draft.media.name,
+            type: draft.media.type,
+            blob: draft.media.blob,
+            url: createObjectUrl(draft.media.blob),
+          });
+        } else {
+          setMedia(null);
+        }
+        setSelectedId(null);
+        return;
+      }
+
+      const legacy = localStorage.getItem("nemdar-creative-studio-phase1");
+      if (!legacy) return alert("No local draft found.");
+      const parsed = JSON.parse(legacy) as CreatorProject;
+      replaceProject(() => ({ ...initialProject, ...parsed }));
+      setSelectedId(null);
+      alert("Legacy project settings restored. Save again to migrate the draft to durable browser storage.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to load the local draft.";
+      alert(message);
+    }
+  }
+
+  async function exportAsset() {
+    if (!media) return alert("Upload media first.");
+    setExportError(null);
+    if (media.kind === "image") {
+      await exportCurrentFrame();
+      setExportState("done");
+      setExportProgress(100);
+      return;
+    }
+    await exportVideo();
   }
 
   async function exportCurrentFrame() {
@@ -257,6 +310,220 @@ export default function PhaseOneEditor() {
     link.click();
   }
 
+  async function loadOverlayImages() {
+    const images = new Map<string, HTMLImageElement>();
+    for (const overlay of project.overlays) {
+      if (overlay.kind !== "image") continue;
+      const image = new Image();
+      image.src = overlay.src;
+      await image.decode();
+      images.set(overlay.id, image);
+    }
+    return images;
+  }
+
+  function drawCompositionFrame(
+    ctx: CanvasRenderingContext2D,
+    source: HTMLVideoElement | HTMLImageElement,
+    width: number,
+    height: number,
+    overlayImages: Map<string, HTMLImageElement>
+  ) {
+    ctx.fillStyle = "#0b1020";
+    ctx.fillRect(0, 0, width, height);
+    drawCover(ctx, source, width, height);
+
+    for (const overlay of project.overlays) {
+      if (overlay.kind === "text") {
+        ctx.save();
+        ctx.globalAlpha = overlay.opacity;
+        ctx.fillStyle = overlay.color;
+        ctx.font = `${overlay.fontWeight} ${overlay.fontSize * (width / 720)}px Arial, sans-serif`;
+        ctx.textAlign = overlay.align;
+        ctx.direction = overlay.direction;
+        ctx.fillText(overlay.text, (overlay.x / 100) * width, (overlay.y / 100) * height);
+        ctx.restore();
+        continue;
+      }
+
+      const image = overlayImages.get(overlay.id);
+      if (!image) continue;
+      const renderedWidth = (overlay.width / 100) * width;
+      const renderedHeight = renderedWidth * (image.naturalHeight / image.naturalWidth);
+      ctx.save();
+      ctx.globalAlpha = overlay.opacity;
+      ctx.drawImage(
+        image,
+        (overlay.x / 100) * width - renderedWidth / 2,
+        (overlay.y / 100) * height - renderedHeight / 2,
+        renderedWidth,
+        renderedHeight
+      );
+      ctx.restore();
+    }
+  }
+
+  async function exportVideo() {
+    const video = videoRef.current;
+    if (!video || media?.kind !== "video") return;
+
+    const start = Math.max(0, project.trimStart);
+    const end = Math.min(project.trimEnd ?? duration, duration);
+    if (!Number.isFinite(end) || end <= start) {
+      setExportState("error");
+      setExportError("Trim end must be after trim start.");
+      return;
+    }
+
+    if (typeof MediaRecorder === "undefined") {
+      setExportState("error");
+      setExportError("This browser does not support in-browser video recording.");
+      return;
+    }
+
+    const canvas = document.createElement("canvas");
+    const ratio = RATIOS[project.ratio];
+    const longSide = 1080;
+    if (ratio.h >= ratio.w) {
+      canvas.height = longSide;
+      canvas.width = Math.round((longSide * ratio.w) / ratio.h);
+    } else {
+      canvas.width = longSide;
+      canvas.height = Math.round((longSide * ratio.h) / ratio.w);
+    }
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      setExportState("error");
+      setExportError("Unable to initialize the video renderer.");
+      return;
+    }
+
+    const canvasStream = canvas.captureStream(30);
+    const captureVideo = video as HTMLVideoElement & { captureStream?: () => MediaStream };
+    if (!project.muted && captureVideo.captureStream) {
+      const sourceStream = captureVideo.captureStream();
+      sourceStream.getAudioTracks().forEach((track) => canvasStream.addTrack(track));
+    }
+
+    const mimeType = [
+      "video/webm;codecs=vp9,opus",
+      "video/webm;codecs=vp8,opus",
+      "video/webm",
+    ].find((candidate) => MediaRecorder.isTypeSupported(candidate));
+
+    const recorder = new MediaRecorder(canvasStream, mimeType ? { mimeType } : undefined);
+    const chunks: BlobPart[] = [];
+    recorder.ondataavailable = (event) => {
+      if (event.data.size > 0) chunks.push(event.data);
+    };
+
+    const overlayImages = await loadOverlayImages();
+    const originalTime = video.currentTime;
+    const originalMuted = video.muted;
+    const wasPaused = video.paused;
+
+    setExportState("rendering");
+    setExportProgress(0);
+    setExportError(null);
+    isExportingRef.current = true;
+
+    try {
+      await seekVideo(video, start);
+
+      const stopped = new Promise<void>((resolve, reject) => {
+        recorder.onstop = () => resolve();
+        recorder.onerror = () => reject(new Error("Video recording failed."));
+      });
+
+      const exportDurationMs = Math.max(1, (end - start) * 1000);
+      video.muted = true;
+      drawCompositionFrame(ctx, video, canvas.width, canvas.height, overlayImages);
+      recorder.start(250);
+      void video.play().catch(() => undefined);
+
+      await new Promise<void>((resolve, reject) => {
+        const startedAt = performance.now();
+
+        const render = () => {
+          try {
+            if (video.readyState >= 2) {
+              drawCompositionFrame(ctx, video, canvas.width, canvas.height, overlayImages);
+            }
+
+            const elapsedMs = performance.now() - startedAt;
+            const desiredTime = Math.min(end, start + elapsedMs / 1000);
+            if (!video.seeking && Math.abs(video.currentTime - desiredTime) > 0.18) {
+              video.currentTime = desiredTime;
+            }
+            const progress = Math.max(0, Math.min(1, elapsedMs / exportDurationMs));
+            setExportProgress(Math.round(progress * 100));
+
+            if (elapsedMs >= exportDurationMs || video.currentTime >= end - 0.025 || video.ended) {
+              video.pause();
+              video.muted = originalMuted;
+              if (recorder.state !== "inactive") recorder.stop();
+              resolve();
+              return;
+            }
+
+            window.setTimeout(render, 1000 / 30);
+          } catch (error) {
+            video.muted = originalMuted;
+            reject(error);
+          }
+        };
+
+        window.setTimeout(render, 1000 / 30);
+      });
+
+      await stopped;
+
+      const blob = new Blob(chunks, { type: recorder.mimeType || "video/webm" });
+      if (!blob.size) throw new Error("The browser produced an empty video file.");
+
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${project.name.replace(/[^a-z0-9-_]+/gi, "-") || "creative"}-${project.ratio.replace(":", "x")}.webm`;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5_000);
+
+      setExportProgress(100);
+      setExportState("done");
+    } catch (error) {
+      if (recorder.state !== "inactive") recorder.stop();
+      setExportState("error");
+      setExportError(error instanceof Error ? error.message : "Video export failed.");
+    } finally {
+      isExportingRef.current = false;
+      video.muted = originalMuted;
+      await seekVideo(video, Math.min(originalTime, duration || originalTime)).catch(() => undefined);
+      if (!wasPaused) void video.play().catch(() => undefined);
+    }
+  }
+
+  function seekVideo(video: HTMLVideoElement, time: number) {
+    if (Math.abs(video.currentTime - time) < 0.03) return Promise.resolve();
+    return new Promise<void>((resolve, reject) => {
+      const onSeeked = () => {
+        cleanup();
+        resolve();
+      };
+      const onError = () => {
+        cleanup();
+        reject(new Error("Unable to seek the source video."));
+      };
+      const cleanup = () => {
+        video.removeEventListener("seeked", onSeeked);
+        video.removeEventListener("error", onError);
+      };
+      video.addEventListener("seeked", onSeeked, { once: true });
+      video.addEventListener("error", onError, { once: true });
+      video.currentTime = time;
+    });
+  }
+
   function drawCover(
     ctx: CanvasRenderingContext2D,
     source: HTMLVideoElement | HTMLImageElement,
@@ -288,7 +555,7 @@ export default function PhaseOneEditor() {
           <button className="ghost" onClick={redo}>Redo</button>
           <button className="ghost" onClick={loadDraft}>Load draft</button>
           <button className="ghost" onClick={saveDraft}>Save draft</button>
-          <button className="primary" onClick={exportCurrentFrame}>Export frame</button>
+          <button className="primary" onClick={exportAsset} disabled={exportState === "rendering"}>{exportState === "rendering" ? `Exporting ${exportProgress}%` : media?.kind === "video" ? "Export video" : "Export frame"}</button>
         </div>
       </header>
 
@@ -345,7 +612,7 @@ export default function PhaseOneEditor() {
                   }}
                   onTimeUpdate={(e) => {
                     const end = project.trimEnd ?? duration;
-                    if (end > project.trimStart && e.currentTarget.currentTime >= end) {
+                    if (!isExportingRef.current && end > project.trimStart && e.currentTarget.currentTime >= end) {
                       e.currentTarget.pause();
                       e.currentTarget.currentTime = project.trimStart;
                     }
@@ -391,6 +658,9 @@ export default function PhaseOneEditor() {
           <div className="transport">
             <span>Phase 1 target</span>
             <strong>Upload → Text → Logo → 9:16 → Trim → Export</strong>
+            {exportState === "rendering" && <span className="exportState">Rendering {exportProgress}%</span>}
+            {exportState === "done" && <span className="exportState success">Export ready</span>}
+            {exportState === "error" && <span className="exportState error">{exportError}</span>}
           </div>
 
           <div className="miniTimeline">
@@ -442,8 +712,8 @@ export default function PhaseOneEditor() {
           {selected && <button className="danger" onClick={deleteSelected}>Delete selected</button>}
 
           <div className="notice">
-            <b>Bootstrap limitation</b>
-            <span>Current export is a still frame. Full timed video render is tracked as NC-P1-13 and will use the render contract already scaffolded.</span>
+            <b>Phase 1 local mode</b>
+            <span>Projects and source media persist in IndexedDB. Video export is rendered locally as WebM in Chromium; a server MP4 render path remains a later production-hardening task.</span>
           </div>
         </aside>
       </section>
