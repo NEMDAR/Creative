@@ -988,3 +988,55 @@ test("P3 automatic music ducking lowers gain only during captioned speech", asyn
   await expect(page.getByLabel("Automatic music ducking")).toBeChecked();
   await expect(page.getByLabel("Ducking gain")).toHaveValue("0.3");
 });
+
+test("P3 Brand Kit persists and applies approved identity without duplicating logo", async ({ page }) => {
+  await page.goto("/");
+
+  const brandKit = page.getByTestId("brand-kit");
+  await expect(brandKit).toBeVisible();
+
+  await page.getByLabel("Brand name").fill("NEMDAR Campaign");
+  await page.getByLabel("Brand primary color").fill("#112233");
+  await page.getByLabel("Brand secondary color").fill("#445566");
+  await page.getByLabel("Brand heading font").fill("Cairo, sans-serif");
+  await page.getByLabel("Brand body font").fill("Roboto, sans-serif");
+  await page.getByLabel("Brand heading weight").fill("900");
+  await page.getByLabel("Brand safe zone").fill("12");
+  await page.getByLabel("Brand caption size").fill("36");
+  await page.getByLabel("Brand caption width").fill("70");
+
+  await brandKit.locator('input[type="file"][accept="image/*"]').setInputFiles({
+    name: "approved-logo.png",
+    mimeType: "image/png",
+    buffer: PNG_1X1,
+  });
+  await expect(page.getByTestId("brand-logo-preview")).toContainText("approved-logo.png");
+
+  await page.getByRole("button", { name: "+ Text" }).click();
+  await page.getByLabel("Text").fill("Brand headline");
+  await page.getByRole("button", { name: "Apply Brand" }).click();
+
+  const brandedText = page.locator(".stage .overlay span").filter({ hasText: "Brand headline" });
+  await expect(brandedText).toHaveCSS("font-family", /Cairo/);
+  await expect(brandedText).toHaveCSS("font-weight", "900");
+  await expect(brandedText).toHaveCSS("color", "rgb(17, 34, 51)");
+
+  await expect(page.getByLabel("Caption font size")).toHaveValue("36");
+  await expect(page.getByLabel("Caption safe zone")).toHaveValue("12");
+  await expect(page.getByLabel("Caption max width")).toHaveValue("70");
+
+  await expect(page.locator('.stage .overlay img[alt="Overlay"]')).toHaveCount(1);
+  await page.getByRole("button", { name: "Apply Brand" }).click();
+  await expect(page.locator('.stage .overlay img[alt="Overlay"]')).toHaveCount(1);
+
+  await expect(brandKit.locator(".brandState")).toHaveText("Saved", { timeout: 5_000 });
+  await page.reload();
+
+  await expect(page.getByLabel("Brand name")).toHaveValue("NEMDAR Campaign");
+  await expect(page.getByLabel("Brand primary color")).toHaveValue("#112233");
+  await expect(page.getByLabel("Brand secondary color")).toHaveValue("#445566");
+  await expect(page.getByLabel("Brand heading font")).toHaveValue("Cairo, sans-serif");
+  await expect(page.getByLabel("Brand safe zone")).toHaveValue("12");
+  await expect(page.getByTestId("brand-logo-preview")).toContainText("approved-logo.png");
+  await expect(page.locator('.stage .overlay img[alt="Overlay"]')).toHaveCount(1);
+});

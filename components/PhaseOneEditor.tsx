@@ -2,8 +2,9 @@
 
 import { ChangeEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { CAPTION_STYLE_PRESETS, captionCueAtTime, cloneCaptionStylePreset, normalizeCaptionStyle, normalizeCaptionTrack, type CaptionCue, type CaptionEmphasis, type CaptionLanguage, type CaptionPosition, type CaptionPresetId, type CaptionStyleConfig, type CaptionTrack } from "../lib/editor/captions";
+import { brandCaptionDefaults, DEFAULT_BRAND_KIT, normalizeBrandKit, type BrandKit } from "../lib/editor/brand-kit";
 import type { CreatorProject, Overlay, RatioKey, TextOverlay } from "../lib/editor/types";
-import { listPhaseTwoSnapshots, loadPhaseOneDraft, loadPhaseTwoDraft, loadPhaseTwoSnapshot, savePhaseTwoDraft, savePhaseTwoSnapshot, type HydratedPhaseTwoState, type PhaseTwoSaveInput, type PhaseTwoSnapshotSummary } from "../lib/editor/storage";
+import { listPhaseTwoSnapshots, loadBrandKit, loadPhaseOneDraft, loadPhaseTwoDraft, loadPhaseTwoSnapshot, saveBrandKit, savePhaseTwoDraft, savePhaseTwoSnapshot, type HydratedPhaseTwoState, type PhaseTwoSaveInput, type PhaseTwoSnapshotSummary } from "../lib/editor/storage";
 import { buildSequentialTimeline, createEmptyTimeline, deleteTimelineClip, duplicateTimelineClip, formatTimelineTime, getMaxTransitionDuration, getNextTimelineClip, getTransitionVisualState, isCrossfadeEligible, moveTimelineClip, removeTimelineRange, resolveTimelineTime, setTimelineClipTransition, setTimelinePlayhead, splitTimelineClip, timelineTimeForClip, trimTimelineClip, updateTimelineClipTransform, type ClipFitMode, type TimelineClip, type TimelineState, type TransitionType } from "../lib/editor/timeline";
 import type { ServerRenderManifest } from "../lib/render/server-types";
 
@@ -76,6 +77,15 @@ function loadImageElement(src: string) {
     image.onload = () => resolve(image);
     image.onerror = () => reject(new Error("Unable to load overlay image."));
     image.src = src;
+  });
+}
+
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error ?? new Error("Unable to read brand logo."));
+    reader.readAsDataURL(file);
   });
 }
 
@@ -255,6 +265,7 @@ function captionPreviewStyle(style: CaptionStyleConfig): CSSProperties {
         : "translateX(-50%)",
     fontSize: `${style.fontSize}px`,
     fontWeight: style.fontWeight,
+    fontFamily: style.fontFamily,
     color: style.textColor,
     backgroundColor: hexToRgba(style.backgroundColor, style.backgroundOpacity),
     textAlign: "center",
@@ -297,7 +308,7 @@ async function rasterizeOverlayAsset(
   const measureCanvas = document.createElement("canvas");
   const measureCtx = measureCanvas.getContext("2d");
   if (!measureCtx) throw new Error("Unable to rasterize text overlay.");
-  measureCtx.font = `${overlay.fontWeight} ${fontSize}px Arial, sans-serif`;
+  measureCtx.font = `${overlay.fontWeight} ${fontSize}px ${overlay.fontFamily ?? "Arial, sans-serif"}`;
   const maxTextWidth = Math.max(
     1,
     ...lines.map((line) => measureCtx.measureText(line || " ").width)
@@ -311,7 +322,7 @@ async function rasterizeOverlayAsset(
   canvas.height = height;
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Unable to rasterize text overlay.");
-  ctx.font = `${overlay.fontWeight} ${fontSize}px Arial, sans-serif`;
+  ctx.font = `${overlay.fontWeight} ${fontSize}px ${overlay.fontFamily ?? "Arial, sans-serif"}`;
   ctx.fillStyle = overlay.color;
   ctx.globalAlpha = overlay.opacity;
   ctx.textBaseline = "middle";
@@ -346,6 +357,8 @@ export default function PhaseOneEditor() {
   const [audioTrack, setAudioTrack] = useState<AudioTrackItem | null>(null);
   const [captions, setCaptions] = useState<CaptionTrack | null>(null);
   const [captionStyle, setCaptionStyle] = useState<CaptionStyleConfig>(() => cloneCaptionStylePreset("clean"));
+  const [brandKit, setBrandKit] = useState<BrandKit>(() => normalizeBrandKit(DEFAULT_BRAND_KIT));
+  const [brandState, setBrandState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [captionLanguage, setCaptionLanguage] = useState<CaptionLanguage>("auto");
   const [captionState, setCaptionState] = useState<"idle" | "generating" | "ready" | "error">("idle");
   const [captionError, setCaptionError] = useState<string | null>(null);
@@ -386,6 +399,7 @@ export default function PhaseOneEditor() {
   const [snapshots, setSnapshots] = useState<PhaseTwoSnapshotSummary[]>([]);
   const [storageHydrated, setStorageHydrated] = useState(false);
   const autosaveTimerRef = useRef<number | null>(null);
+  const brandAutosaveTimerRef = useRef<number | null>(null);
   const lastAutoSnapshotAtRef = useRef(0);
   const undoStack = useRef<CreatorProject[]>([]);
   const redoStack = useRef<CreatorProject[]>([]);
@@ -770,6 +784,103 @@ export default function PhaseOneEditor() {
       next.duckingEnabled = Boolean(next.duckingEnabled);
       return next;
     });
+  }
+
+  function updateBrandKit(patch: Partial<BrandKit>) {
+    setBrandKit((current) => normalizeBrandKit({ ...current, ...patch }));
+  }
+
+  async function onBrandLogoUpload(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file || !file.type.startsWith("image/")) return;
+
+    try {
+      const logoDataUrl = await fileToDataUrl(file);
+      updateBrandKit({
+        logoDataUrl,
+        logoName: file.name,
+      });
+    } catch {
+      setBrandState("error");
+    } finally {
+      event.target.value = "";
+    }
+  }
+
+  function applyBrandKitToProject() {
+    const timing = defaultOverlayTiming();
+    const min = brandKit.safeZone;
+    const max = 100 - brandKit.safeZone;
+    let logoFound = false;
+
+    const brandedOverlays = project.overlays.map((overlay) => {
+      if (overlay.kind === "text") {
+        return {
+          ...overlay,
+          x: Math.max(min, Math.min(max, overlay.x)),
+          y: Math.max(min, Math.min(max, overlay.y)),
+          fontFamily: brandKit.headingFont,
+          fontWeight: brandKit.headingWeight,
+          color: brandKit.primaryColor,
+        };
+      }
+
+      if (overlay.id === "brand-kit-logo" && brandKit.logoDataUrl) {
+        logoFound = true;
+        return {
+          ...overlay,
+          src: brandKit.logoDataUrl,
+          x: brandKit.logoX,
+          y: brandKit.logoY,
+          width: brandKit.logoWidth,
+        };
+      }
+
+      return overlay;
+    });
+
+    if (brandKit.logoDataUrl && !logoFound) {
+      brandedOverlays.push({
+        id: "brand-kit-logo",
+        kind: "image",
+        src: brandKit.logoDataUrl,
+        x: brandKit.logoX,
+        y: brandKit.logoY,
+        width: brandKit.logoWidth,
+        opacity: 1,
+        ...timing,
+      });
+    }
+
+    const nextProject: CreatorProject = {
+      ...project,
+      overlays: brandedOverlays,
+    };
+    const nextCaptionStyle = normalizeCaptionStyle(
+      brandCaptionDefaults(brandKit, captionStyle)
+    );
+
+    replaceProject(() => nextProject);
+    setCaptionStyle(nextCaptionStyle);
+
+    void (async () => {
+      try {
+        setSaveState("saving");
+        const savedAt = await savePhaseTwoDraft({
+          ...buildPhaseTwoSaveInput(),
+          project: nextProject,
+          captionStyle: nextCaptionStyle,
+          brandKit,
+        });
+        await saveBrandKit(brandKit);
+        setLastSavedAt(savedAt);
+        setSaveState("saved");
+        setBrandState("saved");
+      } catch {
+        setSaveState("error");
+        setBrandState("error");
+      }
+    })();
   }
 
   function updateCaptionCue(id: string, patch: Partial<CaptionCue>) {
@@ -1416,7 +1527,8 @@ export default function PhaseOneEditor() {
       y: 22,
       fontSize: 44,
       fontWeight: 700,
-      color: "#ffffff",
+      fontFamily: brandKit.headingFont,
+      color: brandKit.primaryColor,
       opacity: 1,
       align: "center",
       direction: "rtl",
@@ -1668,6 +1780,7 @@ export default function PhaseOneEditor() {
         : null,
       captions,
       captionStyle,
+      brandKit,
       timelineZoom,
       snapEnabled,
       selectedClipId,
@@ -1700,6 +1813,7 @@ export default function PhaseOneEditor() {
     setAudioTrack(restoredAudio);
     setCaptions(state.captions ?? null);
     setCaptionStyle(normalizeCaptionStyle(state.captionStyle));
+    setBrandKit(normalizeBrandKit(state.brandKit));
     setCaptionLanguage(state.captions?.requestedLanguage ?? "auto");
     setCaptionState(state.captions?.cues.length ? "ready" : "idle");
     setSelectedCaptionId(state.captions?.cues[0]?.id ?? null);
@@ -1812,6 +1926,7 @@ export default function PhaseOneEditor() {
       audioTrack: state.audioTrack,
       captions: state.captions ?? null,
       captionStyle: normalizeCaptionStyle(state.captionStyle),
+      brandKit: normalizeBrandKit(state.brandKit),
       timelineZoom: state.timelineZoom,
       snapEnabled: state.snapEnabled,
       selectedClipId: state.selectedClipId,
@@ -1824,9 +1939,10 @@ export default function PhaseOneEditor() {
 
     void (async () => {
       try {
-        const [draft, storedSnapshots] = await Promise.all([
+        const [draft, storedSnapshots, storedBrandKit] = await Promise.all([
           loadPhaseTwoDraft(),
           listPhaseTwoSnapshots(),
+          loadBrandKit(),
         ]);
         if (cancelled) return;
 
@@ -1834,6 +1950,10 @@ export default function PhaseOneEditor() {
         if (draft) {
           restorePhaseTwoState(draft);
           lastAutoSnapshotAtRef.current = draft.savedAt;
+        }
+        if (storedBrandKit) {
+          setBrandKit(normalizeBrandKit(storedBrandKit));
+          setBrandState("saved");
         }
       } catch {
         if (!cancelled) setSaveState("error");
@@ -1846,6 +1966,28 @@ export default function PhaseOneEditor() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!storageHydrated) return;
+
+    if (brandAutosaveTimerRef.current !== null) {
+      window.clearTimeout(brandAutosaveTimerRef.current);
+    }
+
+    setBrandState("saving");
+    brandAutosaveTimerRef.current = window.setTimeout(() => {
+      void saveBrandKit(brandKit)
+        .then(() => setBrandState("saved"))
+        .catch(() => setBrandState("error"));
+    }, 450);
+
+    return () => {
+      if (brandAutosaveTimerRef.current !== null) {
+        window.clearTimeout(brandAutosaveTimerRef.current);
+        brandAutosaveTimerRef.current = null;
+      }
+    };
+  }, [storageHydrated, brandKit]);
 
   useEffect(() => {
     if (!storageHydrated) return;
@@ -1897,6 +2039,7 @@ export default function PhaseOneEditor() {
     audioTrack,
     captions,
     captionStyle,
+    brandKit,
     timelineZoom,
     snapEnabled,
   ]);
@@ -2133,7 +2276,7 @@ export default function PhaseOneEditor() {
         ctx.save();
         ctx.globalAlpha = overlay.opacity;
         ctx.fillStyle = overlay.color;
-        ctx.font = `${overlay.fontWeight} ${overlay.fontSize * (canvas.width / 720)}px Arial, sans-serif`;
+        ctx.font = `${overlay.fontWeight} ${overlay.fontSize * (canvas.width / 720)}px ${overlay.fontFamily ?? "Arial, sans-serif"}`;
         ctx.textAlign = overlay.align;
         ctx.direction = overlay.direction;
         const x = (overlay.x / 100) * canvas.width;
@@ -2201,7 +2344,7 @@ export default function PhaseOneEditor() {
         ctx.save();
         ctx.globalAlpha = overlay.opacity;
         ctx.fillStyle = overlay.color;
-        ctx.font = `${overlay.fontWeight} ${overlay.fontSize * (width / 720)}px Arial, sans-serif`;
+        ctx.font = `${overlay.fontWeight} ${overlay.fontSize * (width / 720)}px ${overlay.fontFamily ?? "Arial, sans-serif"}`;
         ctx.textAlign = overlay.align;
         ctx.direction = overlay.direction;
         ctx.fillText(overlay.text, (overlay.x / 100) * width, (overlay.y / 100) * height);
@@ -2509,7 +2652,7 @@ export default function PhaseOneEditor() {
         <div>
           <span className="eyebrow">NEMDAR</span>
           <strong>Creative Studio</strong>
-          <span className="phaseChip">P3 automatic captions</span>
+          <span className="phaseChip">P3 Brand Kit</span>
         </div>
         <div className="topActions">
           <button className="ghost" onClick={undo}>Undo</button>
@@ -2579,6 +2722,166 @@ export default function PhaseOneEditor() {
           <button className="toolButton" onClick={addText}>+ Text</button>
           <label className="toolButton fileButton">+ Logo / image<input type="file" accept="image/*" onChange={addLogo} hidden /></label>
           <label className="toolButton fileButton">+ Music / audio<input type="file" accept="audio/*" onChange={onAudioUpload} hidden /></label>
+
+          <h2>Brand Kit</h2>
+          <div className="brandKitPanel" data-testid="brand-kit">
+            <div className="brandKitHeader">
+              <strong>{brandKit.name}</strong>
+              <span className={`brandState ${brandState}`}>
+                {brandState === "saving" ? "Saving…" : brandState === "saved" ? "Saved" : brandState === "error" ? "Error" : "Local"}
+              </span>
+            </div>
+            <label>
+              Brand name
+              <input
+                aria-label="Brand name"
+                value={brandKit.name}
+                onChange={(e) => updateBrandKit({ name: e.target.value })}
+              />
+            </label>
+            <div className="brandColorGrid">
+              <label>
+                Primary
+                <input
+                  aria-label="Brand primary color"
+                  type="color"
+                  value={brandKit.primaryColor}
+                  onChange={(e) => updateBrandKit({ primaryColor: e.target.value })}
+                />
+              </label>
+              <label>
+                Secondary
+                <input
+                  aria-label="Brand secondary color"
+                  type="color"
+                  value={brandKit.secondaryColor}
+                  onChange={(e) => updateBrandKit({ secondaryColor: e.target.value })}
+                />
+              </label>
+            </div>
+            <label>
+              Heading font
+              <input
+                aria-label="Brand heading font"
+                value={brandKit.headingFont}
+                onChange={(e) => updateBrandKit({ headingFont: e.target.value })}
+              />
+            </label>
+            <label>
+              Body font
+              <input
+                aria-label="Brand body font"
+                value={brandKit.bodyFont}
+                onChange={(e) => updateBrandKit({ bodyFont: e.target.value })}
+              />
+            </label>
+            <div className="brandNumberGrid">
+              <label>
+                Heading weight
+                <input
+                  aria-label="Brand heading weight"
+                  type="number"
+                  min={400}
+                  max={900}
+                  step={100}
+                  value={brandKit.headingWeight}
+                  onChange={(e) => updateBrandKit({ headingWeight: Number(e.target.value) })}
+                />
+              </label>
+              <label>
+                Safe zone %
+                <input
+                  aria-label="Brand safe zone"
+                  type="number"
+                  min={0}
+                  max={25}
+                  value={brandKit.safeZone}
+                  onChange={(e) => updateBrandKit({ safeZone: Number(e.target.value) })}
+                />
+              </label>
+            </div>
+            <div className="brandNumberGrid">
+              <label>
+                Caption size
+                <input
+                  aria-label="Brand caption size"
+                  type="number"
+                  min={14}
+                  max={64}
+                  value={brandKit.captionFontSize}
+                  onChange={(e) => updateBrandKit({ captionFontSize: Number(e.target.value) })}
+                />
+              </label>
+              <label>
+                Caption width %
+                <input
+                  aria-label="Brand caption width"
+                  type="number"
+                  min={40}
+                  max={96}
+                  value={brandKit.captionMaxWidth}
+                  onChange={(e) => updateBrandKit({ captionMaxWidth: Number(e.target.value) })}
+                />
+              </label>
+            </div>
+            <label className="toolButton fileButton brandLogoUpload">
+              {brandKit.logoName ? "Replace approved logo" : "+ Approved logo"}
+              <input type="file" accept="image/*" onChange={onBrandLogoUpload} hidden />
+            </label>
+            {brandKit.logoDataUrl && (
+              <div className="brandLogoPreview" data-testid="brand-logo-preview">
+                <img src={brandKit.logoDataUrl} alt="Approved brand logo" />
+                <span>{brandKit.logoName}</span>
+                <button
+                  type="button"
+                  className="ghost"
+                  onClick={() => updateBrandKit({ logoDataUrl: null, logoName: null })}
+                >
+                  Remove
+                </button>
+              </div>
+            )}
+            {brandKit.logoDataUrl && (
+              <div className="brandNumberGrid brandLogoPlacement">
+                <label>
+                  Logo width %
+                  <input
+                    aria-label="Brand logo width"
+                    type="number"
+                    min={5}
+                    max={45}
+                    value={brandKit.logoWidth}
+                    onChange={(e) => updateBrandKit({ logoWidth: Number(e.target.value) })}
+                  />
+                </label>
+                <label>
+                  Logo X %
+                  <input
+                    aria-label="Brand logo X"
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={brandKit.logoX}
+                    onChange={(e) => updateBrandKit({ logoX: Number(e.target.value) })}
+                  />
+                </label>
+                <label>
+                  Logo Y %
+                  <input
+                    aria-label="Brand logo Y"
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={brandKit.logoY}
+                    onChange={(e) => updateBrandKit({ logoY: Number(e.target.value) })}
+                  />
+                </label>
+              </div>
+            )}
+            <button type="button" className="toolButton applyBrand" onClick={applyBrandKitToProject}>
+              Apply Brand
+            </button>
+          </div>
 
           <h2>Format</h2>
           <div className="ratioGrid">
@@ -2729,6 +3032,7 @@ export default function PhaseOneEditor() {
                       style={{
                         fontSize: `${Math.max(12, overlay.fontSize * 0.55)}px`,
                         fontWeight: overlay.fontWeight,
+                        fontFamily: overlay.fontFamily ?? "Arial, sans-serif",
                         color: overlay.color,
                         opacity: overlay.opacity,
                         textAlign: overlay.align,

@@ -8,6 +8,7 @@ export type TextOverlay = {
   y: number;
   fontSize: number;
   fontWeight: number;
+  fontFamily?: string;
   color: string;
   opacity: number;
   align: "left" | "center" | "right";

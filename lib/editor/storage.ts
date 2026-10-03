@@ -1,4 +1,5 @@
 import { normalizeCaptionStyle, type CaptionStyleConfig, type CaptionTrack } from "./captions";
+import { normalizeBrandKit, type BrandKit } from "./brand-kit";
 import type { TimelineState } from "./timeline";
 import type { CreatorProject } from "./types";
 
@@ -46,6 +47,7 @@ export type PhaseTwoSaveInput = {
   audioTrack: PersistableAudioTrack | null;
   captions: CaptionTrack | null;
   captionStyle: CaptionStyleConfig;
+  brandKit: BrandKit;
   timelineZoom: number;
   snapEnabled: boolean;
   selectedClipId: string | null;
@@ -62,6 +64,7 @@ type PersistedPhaseTwoState = {
   audioTrack: PersistedAudioTrack | null;
   captions: CaptionTrack | null;
   captionStyle: CaptionStyleConfig;
+  brandKit: BrandKit;
   timelineZoom: number;
   snapEnabled: boolean;
   selectedClipId: string | null;
@@ -110,6 +113,7 @@ const ASSET_STORE = "assets";
 const SNAPSHOT_STORE = "snapshots";
 const PHASE_ONE_KEY = "phase1";
 const PHASE_TWO_KEY = "phase2";
+const BRAND_KIT_KEY = "brand-kit";
 const SNAPSHOT_LIMIT = 10;
 
 function openDb(): Promise<IDBDatabase> {
@@ -164,6 +168,7 @@ function toPersistedPhaseTwoState(input: PhaseTwoSaveInput): PersistedPhaseTwoSt
       : null,
     captions: input.captions ?? null,
     captionStyle: input.captionStyle,
+    brandKit: input.brandKit,
     timelineZoom: input.timelineZoom,
     snapEnabled: input.snapEnabled,
     selectedClipId: input.selectedClipId,
@@ -239,6 +244,7 @@ async function hydratePhaseTwoState(
     audioTrack,
     captions: state.captions ?? null,
     captionStyle: normalizeCaptionStyle(state.captionStyle),
+    brandKit: normalizeBrandKit(state.brandKit),
     timelineZoom: state.timelineZoom,
     snapEnabled: state.snapEnabled,
     selectedClipId: state.selectedClipId,
@@ -247,6 +253,46 @@ async function hydratePhaseTwoState(
     snapshotId,
     snapshotReason,
   };
+}
+
+type BrandKitRecord = {
+  id: "brand-kit";
+  brandKit: BrandKit;
+  savedAt: number;
+};
+
+export async function saveBrandKit(brandKit: BrandKit): Promise<number> {
+  const db = await openDb();
+  const savedAt = Date.now();
+
+  try {
+    const tx = db.transaction(DRAFT_STORE, "readwrite");
+    const record: BrandKitRecord = {
+      id: BRAND_KIT_KEY,
+      brandKit: normalizeBrandKit(brandKit),
+      savedAt,
+    };
+    tx.objectStore(DRAFT_STORE).put(record);
+    await transactionDone(tx);
+    return savedAt;
+  } finally {
+    db.close();
+  }
+}
+
+export async function loadBrandKit(): Promise<BrandKit | null> {
+  const db = await openDb();
+
+  try {
+    const tx = db.transaction(DRAFT_STORE, "readonly");
+    const record = await requestResult<BrandKitRecord | undefined>(
+      tx.objectStore(DRAFT_STORE).get(BRAND_KIT_KEY)
+    );
+    await transactionDone(tx);
+    return record ? normalizeBrandKit(record.brandKit) : null;
+  } finally {
+    db.close();
+  }
 }
 
 export async function savePhaseOneDraft(
