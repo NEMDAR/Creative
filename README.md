@@ -5,7 +5,7 @@ AI-assisted marketing media editor and future campaign production studio.
 - Canonical subdomain: `creative.nemdar.tech`
 - Canonical GitHub repository: `NEMDAR/Creative`
 - Notion roadmap: https://app.notion.com/p/3ee10ca04bc9815fb876e4b7c27d8ad6
-- Current execution gate: **P0 → P1**
+- Current execution gate: **P2 — Timeline Editor**
 
 ## Why the roadmap starts simple
 The first release is deliberately an editor, not an AI-generation suite. It must let a marketer upload media, place Arabic/English text and a logo, choose a social ratio, trim and export. Advanced timeline, captions, image/video generation and campaign automation arrive only after lower gates work end-to-end.
