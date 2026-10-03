@@ -111,6 +111,31 @@ export default function PhaseOneEditor() {
     setSelectedClipId(clips[0]?.id ?? null);
   }, [timeline, selectedClipId]);
 
+  function getOverlayStart(overlay: Overlay) {
+    return Math.max(0, overlay.startTime ?? 0);
+  }
+
+  function getOverlayEnd(overlay: Overlay) {
+    const fallback = timeline.duration > 0 ? timeline.duration : Number.POSITIVE_INFINITY;
+    const value = overlay.endTime ?? fallback;
+    return Math.max(getOverlayStart(overlay), value);
+  }
+
+  function isOverlayActive(overlay: Overlay, time: number) {
+    return time >= getOverlayStart(overlay) && time <= getOverlayEnd(overlay);
+  }
+
+  function defaultOverlayTiming() {
+    if (timeline.duration <= 0) {
+      return { startTime: 0, endTime: null as number | null };
+    }
+
+    const startTime = Math.max(0, Math.min(timeline.playhead, timeline.duration));
+    const remaining = Math.max(0.1, timeline.duration - startTime);
+    const endTime = Math.min(timeline.duration, startTime + Math.min(3, remaining));
+    return { startTime, endTime };
+  }
+
   function replaceProject(
     updater: (current: CreatorProject) => CreatorProject,
     recordHistory = true
@@ -294,6 +319,7 @@ export default function PhaseOneEditor() {
 
   function addText() {
     const id = crypto.randomUUID();
+    const timing = defaultOverlayTiming();
     const overlay: TextOverlay = {
       id,
       kind: "text",
@@ -306,6 +332,7 @@ export default function PhaseOneEditor() {
       opacity: 1,
       align: "center",
       direction: "rtl",
+      ...timing,
     };
     replaceProject((p) => ({ ...p, overlays: [...p.overlays, overlay] }));
     setSelectedId(id);
@@ -317,6 +344,7 @@ export default function PhaseOneEditor() {
     const reader = new FileReader();
     reader.onload = () => {
       const id = crypto.randomUUID();
+      const timing = defaultOverlayTiming();
       const overlay: Overlay = {
         id,
         kind: "image",
@@ -325,6 +353,7 @@ export default function PhaseOneEditor() {
         y: 10,
         width: 18,
         opacity: 1,
+        ...timing,
       };
       replaceProject((p) => ({ ...p, overlays: [...p.overlays, overlay] }));
       setSelectedId(id);
@@ -496,7 +525,7 @@ export default function PhaseOneEditor() {
     if (!source) return;
     drawCover(ctx, source, canvas.width, canvas.height);
 
-    for (const overlay of project.overlays) {
+    for (const overlay of project.overlays.filter((item) => isOverlayActive(item, timeline.playhead))) {
       if (overlay.kind === "text") {
         ctx.save();
         ctx.globalAlpha = overlay.opacity;
@@ -544,13 +573,14 @@ export default function PhaseOneEditor() {
     source: HTMLVideoElement | HTMLImageElement,
     width: number,
     height: number,
-    overlayImages: Map<string, HTMLImageElement>
+    overlayImages: Map<string, HTMLImageElement>,
+    timelineTime: number
   ) {
     ctx.fillStyle = "#0b1020";
     ctx.fillRect(0, 0, width, height);
     drawCover(ctx, source, width, height);
 
-    for (const overlay of project.overlays) {
+    for (const overlay of project.overlays.filter((item) => isOverlayActive(item, timelineTime))) {
       if (overlay.kind === "text") {
         ctx.save();
         ctx.globalAlpha = overlay.opacity;
@@ -693,7 +723,15 @@ export default function PhaseOneEditor() {
 
       const exportDurationMs = Math.max(1, (end - start) * 1000);
       video.muted = true;
-      drawCompositionFrame(ctx, video, canvas.width, canvas.height, overlayImages);
+      const exportTimelineStart = activeClip?.timelineStart ?? timeline.playhead;
+      drawCompositionFrame(
+        ctx,
+        video,
+        canvas.width,
+        canvas.height,
+        overlayImages,
+        exportTimelineStart
+      );
       recorder.start(250);
       void video.play().catch(() => undefined);
 
@@ -703,7 +741,17 @@ export default function PhaseOneEditor() {
         const render = () => {
           try {
             if (video.readyState >= 2) {
-              drawCompositionFrame(ctx, video, canvas.width, canvas.height, overlayImages);
+              const frameTimelineTime =
+                (activeClip?.timelineStart ?? 0) +
+                Math.max(0, video.currentTime - (activeClip?.sourceStart ?? start));
+              drawCompositionFrame(
+                ctx,
+                video,
+                canvas.width,
+                canvas.height,
+                overlayImages,
+                frameTimelineTime
+              );
             }
 
             const elapsedMs = performance.now() - startedAt;
@@ -956,7 +1004,7 @@ export default function PhaseOneEditor() {
               )}
               {media?.kind === "image" && <img id="creative-image" src={media.url} alt="Creative source" className="mediaLayer" />}
 
-              {project.overlays.map((overlay) => (
+              {project.overlays.filter((overlay) => isOverlayActive(overlay, timeline.playhead)).map((overlay) => (
                 <div
                   key={overlay.id}
                   className={selectedId === overlay.id ? "overlay selected" : "overlay"}
@@ -1036,8 +1084,33 @@ export default function PhaseOneEditor() {
             </div>
             <div className="timelineRow">
               <div className="trackLabel">Overlays</div>
-              <div className="overlayTrack">
-                {project.overlays.map((o) => <span key={o.id}>{o.kind}</span>)}
+              <div className="overlayTrack" data-testid="overlay-track">
+                {project.overlays.map((overlay) => {
+                  const start = getOverlayStart(overlay);
+                  const end = Math.min(getOverlayEnd(overlay), timeline.duration || getOverlayEnd(overlay));
+                  const width = Math.max(0.1, end - start);
+                  return (
+                    <button
+                      type="button"
+                      key={overlay.id}
+                      data-testid="overlay-track-item"
+                      className={selectedId === overlay.id ? "overlayTimingBar active" : "overlayTimingBar"}
+                      style={{
+                        left: `${timeline.duration > 0 ? (start / timeline.duration) * 100 : 0}%`,
+                        width: `${timeline.duration > 0 ? (width / timeline.duration) * 100 : 100}%`,
+                      }}
+                      onClick={() => setSelectedId(overlay.id)}
+                    >
+                      {overlay.kind}
+                    </button>
+                  );
+                })}
+                <div
+                  className="timelinePlayhead overlayPlayhead"
+                  style={{
+                    left: `${timeline.duration > 0 ? (timeline.playhead / timeline.duration) * 100 : 0}%`,
+                  }}
+                />
               </div>
             </div>
           </div>
@@ -1110,7 +1183,45 @@ export default function PhaseOneEditor() {
           )}
 
           <h2>Selected element</h2>
-          {!selected && <p className="hint">Select a text or logo on the stage.</p>}
+          {!selected && <p className="hint">Select a text or logo on the stage or overlay track.</p>}
+          {selected && timeline.duration > 0 && (
+            <div className="overlayTimingInspector">
+              <label>
+                Overlay start
+                <input
+                  aria-label="Overlay start"
+                  type="number"
+                  min={0}
+                  max={Math.max(0, getOverlayEnd(selected) - 0.1)}
+                  step="0.1"
+                  value={getOverlayStart(selected)}
+                  onChange={(e) => {
+                    const end = Math.min(getOverlayEnd(selected), timeline.duration);
+                    const value = Math.max(0, Math.min(Number(e.target.value), Math.max(0, end - 0.1)));
+                    updateOverlay(selected.id, { startTime: value } as Partial<Overlay>);
+                  }}
+                />
+              </label>
+              <label>
+                Overlay end
+                <input
+                  aria-label="Overlay end"
+                  type="number"
+                  min={getOverlayStart(selected) + 0.1}
+                  max={timeline.duration}
+                  step="0.1"
+                  value={Math.min(getOverlayEnd(selected), timeline.duration)}
+                  onChange={(e) => {
+                    const value = Math.max(
+                      getOverlayStart(selected) + 0.1,
+                      Math.min(Number(e.target.value), timeline.duration)
+                    );
+                    updateOverlay(selected.id, { endTime: value } as Partial<Overlay>);
+                  }}
+                />
+              </label>
+            </div>
+          )}
           {selected?.kind === "text" && (
             <>
               <label>Text<textarea value={selected.text} dir="auto" onChange={(e) => updateOverlay(selected.id, { text: e.target.value } as Partial<Overlay>)} /></label>
@@ -1131,8 +1242,8 @@ export default function PhaseOneEditor() {
           {selected && <button className="danger" onClick={deleteSelected}>Delete selected</button>}
 
           <div className="notice">
-            <b>P2 clip editing</b>
-            <span>Visual 1 now supports split, per-clip trim, duplicate, delete and clip-level reordering. Durable snapshots remain tracked separately in NC-P2-09.</span>
+            <b>P2 timed overlays</b>
+            <span>Text and logo overlays now have independent start/end timing on the timeline, and preview/export respect their active range.</span>
           </div>
         </aside>
       </section>
