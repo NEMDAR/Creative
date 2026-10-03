@@ -32,6 +32,12 @@ export default function PhaseOneEditor() {
   const stageRef = useRef<HTMLDivElement | null>(null);
   const mediaObjectUrls = useRef<string[]>([]);
 
+  useEffect(() => {
+    if (!videoRef.current) return;
+    videoRef.current.volume = project.volume;
+    videoRef.current.muted = project.muted;
+  }, [project.volume, project.muted, media]);
+
   const selected = useMemo(
     () => project.overlays.find((overlay) => overlay.id === selectedId) ?? null,
     [project.overlays, selectedId]
@@ -272,7 +278,6 @@ export default function PhaseOneEditor() {
                   controls
                   playsInline
                   muted={project.muted}
-                  volume={project.volume}
                   onLoadedMetadata={(e) => {
                     const d = e.currentTarget.duration || 0;
                     setDuration(d);
