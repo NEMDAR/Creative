@@ -161,3 +161,10 @@ h2 { font-size:12px; text-transform:uppercase; letter-spacing:.1em; color:var(--
 .captionPreset.active { border-color:rgba(22,139,241,.85); color:#fff; background:rgba(22,139,241,.18); }
 .captionStyleGrid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
 .captionStyleGrid label { margin-bottom:0; }
+
+.silenceInspector { display:flex; flex-direction:column; gap:9px; margin-bottom:16px; padding:10px; border:1px solid rgba(138,217,170,.22); border-radius:10px; background:rgba(138,217,170,.035); }
+.silenceControls { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.silenceRangeList { display:flex; flex-direction:column; gap:5px; max-height:160px; overflow:auto; }
+.silenceRange { display:grid !important; grid-template-columns:auto 1fr auto; align-items:center; gap:8px !important; margin:0 !important; padding:7px 8px; border:1px solid var(--line); border-radius:8px; background:var(--surface-2); }
+.silenceRange span { color:var(--text); font-size:10px; font-variant-numeric:tabular-nums; }
+.silenceRange strong { color:#8ad9aa; font-size:9px; }

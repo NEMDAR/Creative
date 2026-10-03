@@ -807,3 +807,42 @@ test("P3 transcript edit cuts the selected spoken range from media", async ({ pa
     .poll(async () => Number(await page.getByLabel("Clip duration").inputValue()))
     .toBeCloseTo(initialClipDuration - cutEnd, 1);
 });
+
+test("P3 silence detection reviews ranges before applying video cuts", async ({ page }) => {
+  await page.goto("/");
+
+  await page.locator('input[accept="video/*,image/*"]').setInputFiles(
+    "tests/fixtures/silence-pattern.webm"
+  );
+
+  const video = page.locator("video");
+  await expect(video).toBeVisible();
+  await expect
+    .poll(() => video.evaluate((node: HTMLVideoElement) => node.duration))
+    .toBeGreaterThan(2.9);
+
+  const clipDuration = page.getByLabel("Clip duration");
+  const initialDuration = Number(await clipDuration.inputValue());
+
+  await page.getByRole("button", { name: "Detect silence" }).click();
+
+  const ranges = page.locator(".silenceRange");
+  await expect(ranges).toHaveCount(2, { timeout: 10_000 });
+
+  const firstRangeDuration = Number(
+    (await ranges.first().locator("strong").innerText()).replace("s", "")
+  );
+  expect(firstRangeDuration).toBeGreaterThan(0.8);
+
+  const secondCheckbox = ranges.nth(1).locator('input[type="checkbox"]');
+  await secondCheckbox.uncheck();
+  await expect(secondCheckbox).not.toBeChecked();
+
+  await page.getByRole("button", { name: "Apply selected silence cuts" }).click();
+
+  await expect(page.locator(".silenceRange")).toHaveCount(0);
+  await expect(page.getByTestId("timeline-clip")).toHaveCount(1);
+  await expect
+    .poll(async () => Number(await page.getByLabel("Clip duration").inputValue()))
+    .toBeCloseTo(initialDuration - firstRangeDuration, 1);
+});

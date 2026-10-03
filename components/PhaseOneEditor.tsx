@@ -28,6 +28,9 @@ const initialProject: CreatorProject = {
 type MediaItem = { id: string; kind: "video" | "image"; url: string; name: string; type: string; blob: Blob; duration: number };
 type MediaState = MediaItem | null;
 type AudioTrackItem = { id: string; url: string; name: string; type: string; blob: Blob; duration: number; startTime: number; gain: number; fadeIn: number; fadeOut: number };
+type SilenceReviewRange = { id: string; startTime: number; endTime: number; duration: number; selected: boolean };
+type SilenceSourceKind = "video" | "audio";
+
 type ServerRenderState = {
   jobId: string | null;
   status: "idle" | "queued" | "running" | "succeeded" | "failed";
@@ -89,6 +92,32 @@ function hexToRgba(hex: string, opacity: number) {
   const green = (numeric >> 8) & 255;
   const blue = numeric & 255;
   return `rgba(${red}, ${green}, ${blue}, ${Math.max(0, Math.min(1, opacity))})`;
+}
+
+function cutCaptionTrackRange(
+  track: CaptionTrack | null,
+  cutStart: number,
+  cutEnd: number
+): CaptionTrack | null {
+  if (!track) return track;
+  const cutDuration = Math.max(0, cutEnd - cutStart);
+  if (cutDuration < 0.05) return track;
+
+  const cues = track.cues
+    .map((cue) => {
+      if (cue.endTime <= cutStart) return cue;
+      if (cue.startTime >= cutEnd) {
+        return {
+          ...cue,
+          startTime: Math.max(0, cue.startTime - cutDuration),
+          endTime: Math.max(0.05, cue.endTime - cutDuration),
+        };
+      }
+      return null;
+    })
+    .filter((cue): cue is CaptionCue => Boolean(cue));
+
+  return normalizeCaptionTrack({ ...track, cues });
 }
 
 function captionPreviewStyle(style: CaptionStyleConfig): CSSProperties {
@@ -206,6 +235,12 @@ export default function PhaseOneEditor() {
   const [captionState, setCaptionState] = useState<"idle" | "generating" | "ready" | "error">("idle");
   const [captionError, setCaptionError] = useState<string | null>(null);
   const [selectedCaptionId, setSelectedCaptionId] = useState<string | null>(null);
+  const [silenceRanges, setSilenceRanges] = useState<SilenceReviewRange[]>([]);
+  const [silenceSourceKind, setSilenceSourceKind] = useState<SilenceSourceKind | null>(null);
+  const [silenceState, setSilenceState] = useState<"idle" | "analyzing" | "ready" | "error">("idle");
+  const [silenceError, setSilenceError] = useState<string | null>(null);
+  const [silenceThresholdDb, setSilenceThresholdDb] = useState(-40);
+  const [silenceMinDuration, setSilenceMinDuration] = useState(0.35);
   const [timelineZoom, setTimelineZoom] = useState(1);
   const [snapEnabled, setSnapEnabled] = useState(true);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -753,6 +788,156 @@ export default function PhaseOneEditor() {
         error instanceof Error ? error.message : "Unable to generate captions."
       );
     }
+  }
+
+  async function detectSilence() {
+    const clip =
+      selectedClip?.kind === "video"
+        ? selectedClip
+        : timeline.tracks[0]?.clips.find((item) => item.kind === "video") ?? null;
+    const videoSource = clip
+      ? mediaItems.find((item) => item.id === clip.assetId && item.kind === "video") ?? null
+      : null;
+    const source = videoSource ?? audioTrack;
+
+    if (!source) {
+      setSilenceState("error");
+      setSilenceError("Add or select a video/audio source before detecting silence.");
+      return;
+    }
+
+    setSilenceState("analyzing");
+    setSilenceError(null);
+
+    try {
+      const form = new FormData();
+      form.append("media", source.blob, source.name);
+      form.append("thresholdDb", String(silenceThresholdDb));
+      form.append("minDuration", String(silenceMinDuration));
+
+      const response = await fetch("/api/analyze/silence", {
+        method: "POST",
+        body: form,
+      });
+      const payload = (await response.json()) as {
+        ranges?: Array<{ startTime: number; endTime: number; duration: number }>;
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(payload.error || "Silence analysis failed.");
+      }
+
+      const sourceRanges = payload.ranges ?? [];
+      const mapped: SilenceReviewRange[] = [];
+
+      if (clip && videoSource) {
+        const speed = Math.max(0.01, clip.transform.speed);
+        const sourceStart = clip.sourceStart;
+        const sourceEnd = sourceStart + clip.duration * speed;
+
+        sourceRanges.forEach((range, index) => {
+          const start = Math.max(sourceStart, range.startTime);
+          const end = Math.min(sourceEnd, range.endTime);
+          if (end <= start) return;
+          const startTime =
+            clip.timelineStart + (start - sourceStart) / speed;
+          const endTime =
+            clip.timelineStart + (end - sourceStart) / speed;
+          mapped.push({
+            id: `silence-${index}-${crypto.randomUUID()}`,
+            startTime,
+            endTime,
+            duration: endTime - startTime,
+            selected: true,
+          });
+        });
+        setSilenceSourceKind("video");
+      } else if (audioTrack) {
+        sourceRanges.forEach((range, index) => {
+          const start = Math.max(0, range.startTime);
+          const end = Math.min(audioTrack.duration, range.endTime);
+          if (end <= start) return;
+          mapped.push({
+            id: `silence-${index}-${crypto.randomUUID()}`,
+            startTime: audioTrack.startTime + start,
+            endTime: audioTrack.startTime + end,
+            duration: end - start,
+            selected: true,
+          });
+        });
+        setSilenceSourceKind("audio");
+      }
+
+      setSilenceRanges(mapped);
+      setSilenceState("ready");
+    } catch (error) {
+      setSilenceRanges([]);
+      setSilenceState("error");
+      setSilenceError(
+        error instanceof Error ? error.message : "Unable to detect silence."
+      );
+    }
+  }
+
+  function applySelectedSilenceCuts() {
+    if (silenceSourceKind !== "video") {
+      setSilenceError(
+        "Automatic removal currently applies to selected video clips. Audio-only ranges are review-only."
+      );
+      return;
+    }
+
+    const selectedRanges = silenceRanges
+      .filter((range) => range.selected)
+      .sort((a, b) => b.startTime - a.startTime);
+
+    if (selectedRanges.length === 0) return;
+
+    let nextTimeline = timeline;
+    let nextCaptions = captions;
+
+    for (const range of selectedRanges) {
+      nextTimeline = removeTimelineRange(
+        nextTimeline,
+        range.startTime,
+        range.endTime,
+        `clip-${crypto.randomUUID()}`
+      );
+      nextCaptions = cutCaptionTrackRange(
+        nextCaptions,
+        range.startTime,
+        range.endTime
+      );
+    }
+
+    setTimeline(nextTimeline);
+    setCaptions(nextCaptions);
+    setSilenceRanges([]);
+    setSilenceState("idle");
+    setSilenceError(null);
+
+    const nextClip =
+      resolveTimelineTime(
+        nextTimeline,
+        Math.min(
+          selectedRanges[selectedRanges.length - 1]?.startTime ?? 0,
+          Math.max(0, nextTimeline.duration - 0.001)
+        )
+      )?.clip ??
+      nextTimeline.tracks[0]?.clips[0] ??
+      null;
+
+    setSelectedClipId(nextClip?.id ?? null);
+    if (!nextClip) {
+      setMedia(null);
+      setDuration(0);
+      return;
+    }
+
+    const nextMedia =
+      mediaItems.find((item) => item.id === nextClip.assetId) ?? null;
+    setMedia(nextMedia);
+    setDuration(nextMedia?.kind === "video" ? nextMedia.duration : 0);
   }
 
   function selectMediaItem(item: MediaItem) {
@@ -2724,6 +2909,89 @@ export default function PhaseOneEditor() {
                   Cut spoken range from media
                 </button>
               </div>
+            )}
+          </div>
+
+          <h2>Silence detection</h2>
+          <div className="silenceInspector" data-testid="silence-inspector">
+            <div className="silenceControls">
+              <label>
+                Threshold dB
+                <input
+                  aria-label="Silence threshold"
+                  type="number"
+                  min={-80}
+                  max={-10}
+                  step={1}
+                  value={silenceThresholdDb}
+                  onChange={(e) => setSilenceThresholdDb(Number(e.target.value))}
+                />
+              </label>
+              <label>
+                Min duration
+                <input
+                  aria-label="Silence minimum duration"
+                  type="number"
+                  min={0.1}
+                  max={5}
+                  step={0.05}
+                  value={silenceMinDuration}
+                  onChange={(e) => setSilenceMinDuration(Number(e.target.value))}
+                />
+              </label>
+            </div>
+            <button
+              type="button"
+              className="toolButton"
+              onClick={() => void detectSilence()}
+              disabled={silenceState === "analyzing"}
+            >
+              {silenceState === "analyzing" ? "Analyzing silence…" : "Detect silence"}
+            </button>
+            {silenceError && <p className="captionError">{silenceError}</p>}
+            {silenceRanges.length > 0 && (
+              <div className="silenceRangeList" data-testid="silence-range-list">
+                {silenceRanges.map((range) => (
+                  <label className="silenceRange" key={range.id}>
+                    <input
+                      type="checkbox"
+                      aria-label={`Silence range ${formatTimelineTime(range.startTime)}`}
+                      checked={range.selected}
+                      onChange={(e) =>
+                        setSilenceRanges((current) =>
+                          current.map((item) =>
+                            item.id === range.id
+                              ? { ...item, selected: e.target.checked }
+                              : item
+                          )
+                        )
+                      }
+                    />
+                    <span>
+                      {formatTimelineTime(range.startTime)}–{formatTimelineTime(range.endTime)}
+                    </span>
+                    <strong>{range.duration.toFixed(2)}s</strong>
+                  </label>
+                ))}
+              </div>
+            )}
+            {silenceRanges.length > 0 && (
+              <button
+                type="button"
+                className="danger"
+                disabled={
+                  silenceSourceKind !== "video" ||
+                  !silenceRanges.some((range) => range.selected)
+                }
+                onClick={applySelectedSilenceCuts}
+              >
+                Apply selected silence cuts
+              </button>
+            )}
+            {silenceSourceKind === "audio" && silenceRanges.length > 0 && (
+              <p className="hint">
+                Audio-only silence is reviewable now; automatic removal is enabled for video clips.
+              </p>
             )}
           </div>
 
