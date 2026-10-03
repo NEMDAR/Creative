@@ -878,3 +878,54 @@ test("P3 scene detection offers reviewable reversible split suggestions", async 
   await expect(page.getByTestId("timeline-clip")).toHaveCount(1);
   await expect(page.getByRole("button", { name: "Undo scene splits" })).toHaveCount(0);
 });
+
+test("P3 smart reframe keeps an off-center subject inside social framing", async ({ page }) => {
+  await page.goto("/");
+
+  const subjectSvg = Buffer.from(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="600"><rect width="1200" height="600" fill="#050505"/><rect x="900" y="150" width="200" height="300" rx="40" fill="#ffffff"/></svg>'
+  );
+
+  await page.locator('input[accept="video/*,image/*"]').setInputFiles({
+    name: "off-center-subject.svg",
+    mimeType: "image/svg+xml",
+    buffer: subjectSvg,
+  });
+
+  const image = page.locator("#creative-image");
+  await expect(image).toBeVisible();
+  await expect
+    .poll(() =>
+      image.evaluate(
+        (node: HTMLImageElement) => node.complete && node.naturalWidth > 0
+      )
+    )
+    .toBe(true);
+
+  const saveState = page.getByTestId("save-state");
+  await expect(saveState).toHaveText("Saved", { timeout: 5_000 });
+  const beforeReframeSavedAt = await saveState.getAttribute("data-saved-at");
+
+  await page.getByRole("button", { name: "Smart 4:5" }).click();
+
+  await expect(page.getByTestId("smart-reframe-result")).toBeVisible();
+  const cropX = Number(await page.getByLabel("Clip crop X").inputValue());
+  expect(cropX).toBeGreaterThan(65);
+  await expect(page.getByRole("button", { name: "4:5", exact: true })).toHaveClass(/active/);
+
+  const objectPosition = await image.evaluate(
+    (node) => getComputedStyle(node).objectPosition
+  );
+  expect(Number.parseFloat(objectPosition)).toBeGreaterThan(65);
+
+  await expect
+    .poll(() => saveState.getAttribute("data-saved-at"), { timeout: 5_000 })
+    .not.toBe(beforeReframeSavedAt);
+  await expect(saveState).toHaveText("Saved");
+  await page.reload();
+
+  await expect(page.getByRole("button", { name: "4:5", exact: true })).toHaveClass(/active/);
+  await expect
+    .poll(async () => Number(await page.getByLabel("Clip crop X").inputValue()))
+    .toBeGreaterThan(65);
+});

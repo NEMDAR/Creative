@@ -95,6 +95,120 @@ function hexToRgba(hex: string, opacity: number) {
   return `rgba(${red}, ${green}, ${blue}, ${Math.max(0, Math.min(1, opacity))})`;
 }
 
+type ReframeAnchor = {
+  x: number;
+  y: number;
+  confidence: number;
+};
+
+function detectSaliencyAnchor(
+  source: HTMLImageElement | HTMLVideoElement
+): ReframeAnchor {
+  const sourceWidth =
+    source instanceof HTMLVideoElement ? source.videoWidth : source.naturalWidth;
+  const sourceHeight =
+    source instanceof HTMLVideoElement ? source.videoHeight : source.naturalHeight;
+
+  if (!sourceWidth || !sourceHeight) {
+    return { x: 50, y: 50, confidence: 0 };
+  }
+
+  const maxSide = 96;
+  const scale = Math.min(1, maxSide / Math.max(sourceWidth, sourceHeight));
+  const width = Math.max(24, Math.round(sourceWidth * scale));
+  const height = Math.max(24, Math.round(sourceHeight * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) return { x: 50, y: 50, confidence: 0 };
+
+  ctx.drawImage(source, 0, 0, width, height);
+  const data = ctx.getImageData(0, 0, width, height).data;
+  const luma = new Float32Array(width * height);
+  let mean = 0;
+
+  for (let i = 0; i < width * height; i += 1) {
+    const offset = i * 4;
+    const value =
+      data[offset] * 0.2126 +
+      data[offset + 1] * 0.7152 +
+      data[offset + 2] * 0.0722;
+    luma[i] = value;
+    mean += value;
+  }
+  mean /= width * height;
+
+  let total = 0;
+  let weightedX = 0;
+  let weightedY = 0;
+  const marginX = Math.max(1, Math.round(width * 0.04));
+  const marginY = Math.max(1, Math.round(height * 0.04));
+
+  for (let y = marginY; y < height - marginY; y += 1) {
+    for (let x = marginX; x < width - marginX; x += 1) {
+      const index = y * width + x;
+      const gx = Math.abs(luma[index + 1] - luma[index - 1]);
+      const gy = Math.abs(luma[index + width] - luma[index - width]);
+      const contrast = Math.abs(luma[index] - mean);
+      const offset = index * 4;
+      const maxChannel = Math.max(
+        data[offset],
+        data[offset + 1],
+        data[offset + 2]
+      );
+      const minChannel = Math.min(
+        data[offset],
+        data[offset + 1],
+        data[offset + 2]
+      );
+      const saturation = maxChannel - minChannel;
+      const centerPrior =
+        0.65 +
+        0.35 *
+          (1 -
+            Math.min(
+              1,
+              Math.hypot(
+                x / Math.max(1, width - 1) - 0.5,
+                y / Math.max(1, height - 1) - 0.5
+              ) / 0.72
+            ));
+      const weight =
+        (gx * 1.5 + gy * 1.5 + contrast * 0.7 + saturation * 0.25) *
+        centerPrior;
+
+      if (weight <= 0.5) continue;
+      total += weight;
+      weightedX += x * weight;
+      weightedY += y * weight;
+    }
+  }
+
+  if (total <= 0) {
+    return { x: 50, y: 50, confidence: 0 };
+  }
+
+  const x = Math.max(
+    5,
+    Math.min(95, (weightedX / total / Math.max(1, width - 1)) * 100)
+  );
+  const y = Math.max(
+    5,
+    Math.min(95, (weightedY / total / Math.max(1, height - 1)) * 100)
+  );
+  const confidence = Math.max(
+    0,
+    Math.min(1, total / (width * height * 80))
+  );
+
+  return {
+    x: Number(x.toFixed(1)),
+    y: Number(y.toFixed(1)),
+    confidence: Number(confidence.toFixed(2)),
+  };
+}
+
 function cutCaptionTrackRange(
   track: CaptionTrack | null,
   cutStart: number,
@@ -247,6 +361,9 @@ export default function PhaseOneEditor() {
   const [sceneError, setSceneError] = useState<string | null>(null);
   const [sceneThreshold, setSceneThreshold] = useState(0.35);
   const [sceneBackup, setSceneBackup] = useState<TimelineState | null>(null);
+  const [smartReframeState, setSmartReframeState] = useState<"idle" | "ready" | "error">("idle");
+  const [smartReframeAnchor, setSmartReframeAnchor] = useState<ReframeAnchor | null>(null);
+  const [smartReframeError, setSmartReframeError] = useState<string | null>(null);
   const [timelineZoom, setTimelineZoom] = useState(1);
   const [snapEnabled, setSnapEnabled] = useState(true);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -343,9 +460,37 @@ export default function PhaseOneEditor() {
       };
     });
 
-    setTimeline((current) =>
-      buildSequentialTimeline(inputs, current.playhead)
-    );
+    setTimeline((current) => {
+      const currentClips = current.tracks[0]?.clips ?? [];
+      if (currentClips.length > 0) {
+        const currentAssetIds = new Set(currentClips.map((clip) => clip.assetId));
+        const nextAssetIds = new Set(mediaItems.map((item) => item.id));
+        const sameAssets =
+          currentAssetIds.size === nextAssetIds.size &&
+          Array.from(currentAssetIds).every((id) => nextAssetIds.has(id));
+
+        if (sameAssets) {
+          if (
+            singleSource &&
+            mediaItems[0]?.kind === "video" &&
+            currentClips.length === 1
+          ) {
+            const clip = currentClips[0];
+            const end = project.trimEnd ?? mediaItems[0].duration;
+            return trimTimelineClip(
+              current,
+              clip.id,
+              project.trimStart,
+              Math.max(0.1, end - project.trimStart)
+            );
+          }
+
+          return current;
+        }
+      }
+
+      return buildSequentialTimeline(inputs, current.playhead);
+    });
   }, [mediaItems, project.trimStart, project.trimEnd]);
 
   const selected = useMemo(
@@ -1050,6 +1195,75 @@ export default function PhaseOneEditor() {
     }
   }
 
+  function applySmartReframe(targetRatio?: RatioKey) {
+    if (!selectedClip) {
+      setSmartReframeState("error");
+      setSmartReframeError("Select a visual clip before smart reframe.");
+      return;
+    }
+
+    const selectedMedia =
+      mediaItems.find((item) => item.id === selectedClip.assetId) ?? null;
+    if (!selectedMedia || media?.id !== selectedMedia.id) {
+      setSmartReframeState("error");
+      setSmartReframeError("Open the selected clip in the preview before smart reframe.");
+      return;
+    }
+
+    const source =
+      selectedMedia.kind === "video"
+        ? videoRef.current
+        : (document.getElementById("creative-image") as HTMLImageElement | null);
+
+    if (!source) {
+      setSmartReframeState("error");
+      setSmartReframeError("The current frame is not ready for analysis.");
+      return;
+    }
+
+    try {
+      const anchor = detectSaliencyAnchor(source);
+      const nextTimeline = updateTimelineClipTransform(timeline, selectedClip.id, {
+        fit: "cover",
+        cropX: anchor.x,
+        cropY: anchor.y,
+      });
+      const nextProject = targetRatio
+        ? { ...project, ratio: targetRatio }
+        : project;
+
+      setTimeline(nextTimeline);
+      if (targetRatio) {
+        replaceProject(() => nextProject);
+      }
+      setSmartReframeAnchor(anchor);
+      setSmartReframeState("ready");
+      setSmartReframeError(null);
+
+      // Persist the atomic reframe result immediately so a reload cannot race
+      // the regular debounced autosave between ratio and crop updates.
+      void (async () => {
+        try {
+          setSaveState("saving");
+          const savedAt = await savePhaseTwoDraft({
+            ...buildPhaseTwoSaveInput(),
+            project: nextProject,
+            timeline: nextTimeline,
+          });
+          setLastSavedAt(savedAt);
+          setSaveState("saved");
+        } catch {
+          setSaveState("error");
+        }
+      })();
+    } catch (error) {
+      setSmartReframeState("error");
+      setSmartReframeError(
+        error instanceof Error ? error.message : "Unable to analyze this frame."
+      );
+    }
+  }
+
   function selectMediaItem(item: MediaItem) {
     setMedia(item);
     setDuration(item.kind === "video" ? item.duration : 0);
@@ -1154,14 +1368,26 @@ export default function PhaseOneEditor() {
   }
 
   function moveMediaItem(id: string, direction: -1 | 1) {
+    let moved = false;
     setMediaItems((current) => {
       const index = current.findIndex((item) => item.id === id);
       const target = index + direction;
       if (index < 0 || target < 0 || target >= current.length) return current;
       const next = [...current];
       [next[index], next[target]] = [next[target], next[index]];
+      moved = true;
       return next;
     });
+
+    if (moved) {
+      setTimeline((current) => {
+        const clips = current.tracks[0]?.clips.filter(
+          (clip) => clip.assetId === id
+        ) ?? [];
+        if (clips.length !== 1) return current;
+        return moveTimelineClip(current, clips[0].id, direction);
+      });
+    }
   }
 
   function addText() {
@@ -3382,6 +3608,20 @@ export default function PhaseOneEditor() {
                     </select>
                   </label>
                 )}
+              </div>
+              <div className="smartReframePanel" data-testid="smart-reframe-panel">
+                <div className="smartReframeButtons">
+                  <button type="button" onClick={() => applySmartReframe("9:16")}>Smart 9:16</button>
+                  <button type="button" onClick={() => applySmartReframe("4:5")}>Smart 4:5</button>
+                  <button type="button" onClick={() => applySmartReframe("1:1")}>Smart 1:1</button>
+                  <button type="button" onClick={() => applySmartReframe("16:9")}>Smart 16:9</button>
+                </div>
+                {smartReframeAnchor && smartReframeState === "ready" && (
+                  <small data-testid="smart-reframe-result">
+                    Subject anchor {smartReframeAnchor.x.toFixed(1)}% × {smartReframeAnchor.y.toFixed(1)}% · confidence {Math.round(smartReframeAnchor.confidence * 100)}%
+                  </small>
+                )}
+                {smartReframeError && <p className="captionError">{smartReframeError}</p>}
               </div>
               {selectedNextClip ? (
                 <div className="transitionInspector" data-testid="transition-inspector">
