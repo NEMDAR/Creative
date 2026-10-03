@@ -79,3 +79,10 @@ h2 { font-size:12px; text-transform:uppercase; letter-spacing:.1em; color:var(--
 .notice span { color:var(--muted); font-size:11px; line-height:1.5; }
 @media (max-width: 1050px) { .workspace { grid-template-columns:210px 1fr; } .inspector { grid-column:1 / -1; border-left:0; border-top:1px solid var(--line); } .stage { max-width:92%; } }
 @media (max-width: 720px) { .workspace { display:block; } .leftPanel { border-right:0; border-bottom:1px solid var(--line); } .stageWrap { min-height:460px; padding:16px; } .topActions .ghost { display:none; } }
+
+.clipInspector { display:flex; flex-direction:column; gap:10px; margin-bottom:16px; padding:12px; border:1px solid var(--line); border-radius:12px; background:rgba(255,255,255,.025); }
+.clipMeta { display:flex; align-items:center; justify-content:space-between; gap:10px; min-width:0; }
+.clipMeta strong { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
+.clipMeta span { flex:0 0 auto; color:var(--accent); font-size:10px; text-transform:uppercase; }
+.clipActionGrid { display:grid; grid-template-columns:1fr 1fr; gap:7px; }
+.clipActionGrid button { border:1px solid var(--line); border-radius:8px; padding:8px; background:var(--surface-2); color:var(--text); font-size:11px; }
