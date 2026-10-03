@@ -201,3 +201,10 @@ h2 { font-size:12px; text-transform:uppercase; letter-spacing:.1em; color:var(--
 .brandLogoPreview button { padding:5px 7px; font-size:9px; }
 .brandLogoPlacement { grid-template-columns:1fr 1fr 1fr; }
 .applyBrand { border-color:rgba(22,139,241,.6); background:rgba(22,139,241,.14); }
+
+.templateGrid { display:grid; gap:7px; }
+.templateCard { display:grid; grid-template-columns:auto 1fr; gap:3px 8px; align-items:center; width:100%; padding:9px; border:1px solid var(--line); border-radius:10px; background:var(--surface-2); color:var(--text); text-align:left; }
+.templateCard:hover { border-color:rgba(22,139,241,.55); background:rgba(22,139,241,.08); }
+.templateCard > span { grid-row:1 / span 2; min-width:34px; height:34px; display:grid; place-items:center; border-radius:8px; background:rgba(22,139,241,.14); color:var(--accent); font-size:9px; font-weight:800; }
+.templateCard strong { font-size:11px; }
+.templateCard small { color:var(--muted); font-size:9px; line-height:1.3; }

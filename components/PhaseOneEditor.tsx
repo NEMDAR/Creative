@@ -6,6 +6,7 @@ import { brandCaptionDefaults, DEFAULT_BRAND_KIT, normalizeBrandKit, type BrandK
 import type { CreatorProject, Overlay, RatioKey, TextOverlay } from "../lib/editor/types";
 import { listPhaseTwoSnapshots, loadBrandKit, loadPhaseOneDraft, loadPhaseTwoDraft, loadPhaseTwoSnapshot, saveBrandKit, savePhaseTwoDraft, savePhaseTwoSnapshot, type HydratedPhaseTwoState, type PhaseTwoSaveInput, type PhaseTwoSnapshotSummary } from "../lib/editor/storage";
 import { buildSequentialTimeline, createEmptyTimeline, deleteTimelineClip, duplicateTimelineClip, formatTimelineTime, getMaxTransitionDuration, getNextTimelineClip, getTransitionVisualState, isCrossfadeEligible, moveTimelineClip, removeTimelineRange, resolveTimelineTime, setTimelineClipTransition, setTimelinePlayhead, splitTimelineClip, timelineTimeForClip, trimTimelineClip, updateTimelineClipTransform, type ClipFitMode, type TimelineClip, type TimelineState, type TransitionType } from "../lib/editor/timeline";
+import { instantiateMarketingTemplate, MARKETING_TEMPLATES, type MarketingTemplateId } from "../lib/editor/templates";
 import type { ServerRenderManifest } from "../lib/render/server-types";
 
 const RATIOS: Record<RatioKey, { w: number; h: number }> = {
@@ -879,6 +880,60 @@ export default function PhaseOneEditor() {
       } catch {
         setSaveState("error");
         setBrandState("error");
+      }
+    })();
+  }
+
+  function startMarketingTemplate(id: MarketingTemplateId) {
+    const instantiated = instantiateMarketingTemplate(id, brandKit);
+    const nextTimeline = createEmptyTimeline();
+    const firstTextOverlay =
+      instantiated.project.overlays.find((overlay) => overlay.kind === "text") ?? null;
+
+    setProject(instantiated.project);
+    setCaptionStyle(instantiated.captionStyle);
+    setMedia(null);
+    setMediaItems([]);
+    setDuration(0);
+    setTimeline(nextTimeline);
+    setAudioTrack(null);
+    setCaptions(null);
+    setCaptionLanguage("auto");
+    setCaptionState("idle");
+    setSelectedCaptionId(null);
+    setSelectedClipId(null);
+    setSelectedId(firstTextOverlay?.id ?? null);
+    setTimelineZoom(1);
+    setSnapEnabled(true);
+    setSilenceRanges([]);
+    setSceneSuggestions([]);
+    setSceneBackup(null);
+    setSmartReframeState("idle");
+    setSmartReframeAnchor(null);
+    setSmartReframeError(null);
+    undoStack.current = [];
+    redoStack.current = [];
+
+    void (async () => {
+      try {
+        setSaveState("saving");
+        const savedAt = await savePhaseTwoDraft({
+          project: instantiated.project,
+          mediaItems: [],
+          timeline: nextTimeline,
+          audioTrack: null,
+          captions: null,
+          captionStyle: instantiated.captionStyle,
+          brandKit,
+          timelineZoom: 1,
+          snapEnabled: true,
+          selectedClipId: null,
+          selectedOverlayId: firstTextOverlay?.id ?? null,
+        });
+        setLastSavedAt(savedAt);
+        setSaveState("saved");
+      } catch {
+        setSaveState("error");
       }
     })();
   }
@@ -2652,7 +2707,7 @@ export default function PhaseOneEditor() {
         <div>
           <span className="eyebrow">NEMDAR</span>
           <strong>Creative Studio</strong>
-          <span className="phaseChip">P3 Brand Kit</span>
+          <span className="phaseChip">P3 Marketing Templates</span>
         </div>
         <div className="topActions">
           <button className="ghost" onClick={undo}>Undo</button>
@@ -2881,6 +2936,23 @@ export default function PhaseOneEditor() {
             <button type="button" className="toolButton applyBrand" onClick={applyBrandKitToProject}>
               Apply Brand
             </button>
+          </div>
+
+          <h2>Templates</h2>
+          <div className="templateGrid" data-testid="marketing-templates">
+            {MARKETING_TEMPLATES.map((template) => (
+              <button
+                type="button"
+                key={template.id}
+                className="templateCard"
+                aria-label={`Start template ${template.name}`}
+                onClick={() => startMarketingTemplate(template.id)}
+              >
+                <span>{template.ratio}</span>
+                <strong>{template.name}</strong>
+                <small>{template.description}</small>
+              </button>
+            ))}
           </div>
 
           <h2>Format</h2>

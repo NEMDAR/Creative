@@ -495,7 +495,7 @@ test("P2 timeline UX supports snapping zoom and keyboard navigation", async ({ p
 test("P2 autosave reloads latest draft and restores a manual snapshot", async ({ page }) => {
   await page.goto("/");
 
-  await page.getByLabel("Name").fill("Version One");
+  await page.getByRole("textbox", { name: "Name", exact: true }).fill("Version One");
 
   const sourceInput = page.locator('input[accept="video/*,image/*"]');
   await sourceInput.setInputFiles({
@@ -520,7 +520,7 @@ test("P2 autosave reloads latest draft and restores a manual snapshot", async ({
 
   const saveState = page.getByTestId("save-state");
   const previousSavedAt = await saveState.getAttribute("data-saved-at");
-  await page.getByLabel("Name").fill("Autosaved Edit");
+  await page.getByRole("textbox", { name: "Name", exact: true }).fill("Autosaved Edit");
   await expect
     .poll(() => saveState.getAttribute("data-saved-at"), { timeout: 5_000 })
     .not.toBe(previousSavedAt);
@@ -528,7 +528,7 @@ test("P2 autosave reloads latest draft and restores a manual snapshot", async ({
 
   await page.reload();
 
-  await expect(page.getByLabel("Name")).toHaveValue("Autosaved Edit", { timeout: 5_000 });
+  await expect(page.getByRole("textbox", { name: "Name", exact: true })).toHaveValue("Autosaved Edit", { timeout: 5_000 });
   await expect(page.locator("#creative-image")).toBeVisible();
   await expect(
     page.getByTestId("snapshot-item").filter({ hasText: "Manual" }).first()
@@ -540,7 +540,7 @@ test("P2 autosave reloads latest draft and restores a manual snapshot", async ({
     .first()
     .click();
 
-  await expect(page.getByLabel("Name")).toHaveValue("Version One");
+  await expect(page.getByRole("textbox", { name: "Name", exact: true })).toHaveValue("Version One");
   await expect(page.getByTestId("save-state")).toHaveText("Saved");
 });
 
@@ -641,8 +641,8 @@ test("P2 representative long project stays responsive and renders MP4", async ({
   await expect(renderState).toBeVisible();
 
   // Editing remains available while FFmpeg is running.
-  await page.getByLabel("Name").fill("Edited during render");
-  await expect(page.getByLabel("Name")).toHaveValue("Edited during render");
+  await page.getByRole("textbox", { name: "Name", exact: true }).fill("Edited during render");
+  await expect(page.getByRole("textbox", { name: "Name", exact: true })).toHaveValue("Edited during render");
 
   await expect(renderState).toContainText(/Complete|Failed/, { timeout: 150_000 });
   const finalState = (await renderState.textContent()) ?? "";
@@ -1038,5 +1038,48 @@ test("P3 Brand Kit persists and applies approved identity without duplicating lo
   await expect(page.getByLabel("Brand heading font")).toHaveValue("Cairo, sans-serif");
   await expect(page.getByLabel("Brand safe zone")).toHaveValue("12");
   await expect(page.getByTestId("brand-logo-preview")).toContainText("approved-logo.png");
+  await expect(page.locator('.stage .overlay img[alt="Overlay"]')).toHaveCount(1);
+});
+
+test("P3 marketing template creates a brand-safe editable project and persists edits", async ({ page }) => {
+  await page.goto("/");
+
+  await page.getByLabel("Brand name").fill("Template Brand");
+  await page.getByLabel("Brand primary color").fill("#102A43");
+  await page.getByLabel("Brand secondary color").fill("#2F80ED");
+  await page.getByLabel("Brand heading font").fill("Cairo, sans-serif");
+  await page.getByLabel("Brand body font").fill("Roboto, sans-serif");
+  await page.getByLabel("Brand safe zone").fill("11");
+
+  await page.getByTestId("brand-kit").locator('input[type="file"][accept="image/*"]').setInputFiles({
+    name: "template-logo.png",
+    mimeType: "image/png",
+    buffer: PNG_1X1,
+  });
+
+  await page.getByRole("button", { name: "Start template Product Spotlight" }).click();
+
+  await expect(page.getByRole("textbox", { name: "Name", exact: true })).toHaveValue("Template Brand — Product Spotlight");
+  await expect(page.getByRole("button", { name: "9:16", exact: true })).toHaveClass(/active/);
+  await expect(page.locator(".stage .overlay span").filter({ hasText: "YOUR MAIN HOOK" })).toBeVisible();
+  await expect(page.locator(".stage .overlay span").filter({ hasText: "Add one clear benefit" })).toBeVisible();
+  await expect(page.locator(".stage .overlay span").filter({ hasText: "LEARN MORE" })).toBeVisible();
+  await expect(page.locator('.stage .overlay img[alt="Overlay"]')).toHaveCount(1);
+  await expect(page.getByLabel("Caption safe zone")).toHaveValue("11");
+
+  const headline = page.getByLabel("Text");
+  await expect(headline).toHaveValue("YOUR MAIN HOOK");
+  const saveState = page.getByTestId("save-state");
+  const before = await saveState.getAttribute("data-saved-at");
+  await headline.fill("Editable campaign hook");
+  await expect(page.locator(".stage .overlay span").filter({ hasText: "Editable campaign hook" })).toBeVisible();
+  await expect
+    .poll(() => saveState.getAttribute("data-saved-at"), { timeout: 5_000 })
+    .not.toBe(before);
+
+  await page.reload();
+
+  await expect(page.getByRole("textbox", { name: "Name", exact: true })).toHaveValue("Template Brand — Product Spotlight");
+  await expect(page.locator(".stage .overlay span").filter({ hasText: "Editable campaign hook" })).toBeVisible();
   await expect(page.locator('.stage .overlay img[alt="Overlay"]')).toHaveCount(1);
 });
