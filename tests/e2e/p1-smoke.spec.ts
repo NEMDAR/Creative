@@ -90,8 +90,19 @@ test("P1 video trim exports a timed WebM asset", async ({ page }) => {
 
   await page.getByLabel("Trim start").fill("0.1");
   await page.getByLabel("Trim end").fill("0.4");
+  await page.getByRole("button", { name: "9:16" }).click();
+  await expect(page.getByRole("button", { name: "9:16" })).toHaveClass(/active/);
+
   await page.getByRole("button", { name: "+ Text" }).click();
-  await page.getByLabel("Text").fill("Video export");
+  await page.getByLabel("Text").fill("فيديو تجريبي Video");
+
+  const logoInput = page.locator('input[accept="image/*"]');
+  await logoInput.setInputFiles({
+    name: "logo.png",
+    mimeType: "image/png",
+    buffer: PNG_1X1,
+  });
+  await expect(page.locator('.overlay img[alt="Overlay"]')).toBeVisible();
 
   const downloadPromise = page.waitForEvent("download", { timeout: 15_000 });
   await page.getByRole("button", { name: "Export video" }).click();
