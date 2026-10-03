@@ -188,7 +188,7 @@ export default function PhaseOneEditor() {
 
   function saveDraft() {
     try {
-      localStorage.setItem("nemdar-creator-phase1", JSON.stringify(project));
+      localStorage.setItem("nemdar-creative-studio-phase1", JSON.stringify(project));
       alert("Project settings and overlays saved locally. Re-select the source media after a browser restart.");
     } catch {
       alert("This draft is too large for local browser storage. Use a smaller logo or remove large image overlays.");
@@ -196,7 +196,7 @@ export default function PhaseOneEditor() {
   }
 
   function loadDraft() {
-    const raw = localStorage.getItem("nemdar-creator-phase1");
+    const raw = localStorage.getItem("nemdar-creative-studio-phase1");
     if (!raw) return alert("No local draft found.");
     const parsed = JSON.parse(raw) as CreatorProject;
     replaceProject(() => ({ ...initialProject, ...parsed }));
@@ -222,7 +222,7 @@ export default function PhaseOneEditor() {
 
     const source = media.kind === "video"
       ? videoRef.current
-      : (document.getElementById("creator-image") as HTMLImageElement | null);
+      : (document.getElementById("creative-image") as HTMLImageElement | null);
     if (!source) return;
     drawCover(ctx, source, canvas.width, canvas.height);
 
@@ -280,7 +280,7 @@ export default function PhaseOneEditor() {
       <header className="topbar">
         <div>
           <span className="eyebrow">NEMDAR</span>
-          <strong>Creator</strong>
+          <strong>Creative Studio</strong>
           <span className="phaseChip">P0/P1 bootstrap</span>
         </div>
         <div className="topActions">
@@ -353,7 +353,7 @@ export default function PhaseOneEditor() {
                   className="mediaLayer"
                 />
               )}
-              {media?.kind === "image" && <img id="creator-image" src={media.url} alt="Creative source" className="mediaLayer" />}
+              {media?.kind === "image" && <img id="creative-image" src={media.url} alt="Creative source" className="mediaLayer" />}
 
               {project.overlays.map((overlay) => (
                 <div
