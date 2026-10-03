@@ -140,12 +140,12 @@ export default function PhaseOneEditor() {
       overlays: project.overlays.filter((o) => o.kind === "text"),
       note: "Local media files are intentionally not persisted in the P0 bootstrap.",
     };
-    localStorage.setItem("nemdar-creator-phase1", JSON.stringify(serializable));
+    localStorage.setItem("nemdar-creative-studio-phase1", JSON.stringify(serializable));
     alert("Project settings saved locally. Re-select media after a browser restart in this bootstrap build.");
   }
 
   function loadDraft() {
-    const raw = localStorage.getItem("nemdar-creator-phase1");
+    const raw = localStorage.getItem("nemdar-creative-studio-phase1");
     if (!raw) return alert("No local draft found.");
     const parsed = JSON.parse(raw) as CreatorProject;
     setProject({ ...initialProject, ...parsed });
@@ -171,7 +171,7 @@ export default function PhaseOneEditor() {
 
     const source = media.kind === "video"
       ? videoRef.current
-      : (document.getElementById("creator-image") as HTMLImageElement | null);
+      : (document.getElementById("creative-image") as HTMLImageElement | null);
     if (!source) return;
     drawCover(ctx, source, canvas.width, canvas.height);
 
@@ -229,7 +229,7 @@ export default function PhaseOneEditor() {
       <header className="topbar">
         <div>
           <span className="eyebrow">NEMDAR</span>
-          <strong>Creator</strong>
+          <strong>Creative Studio</strong>
           <span className="phaseChip">P0/P1 bootstrap</span>
         </div>
         <div className="topActions">
@@ -286,7 +286,7 @@ export default function PhaseOneEditor() {
                   className="mediaLayer"
                 />
               )}
-              {media?.kind === "image" && <img id="creator-image" src={media.url} alt="Creative source" className="mediaLayer" />}
+              {media?.kind === "image" && <img id="creative-image" src={media.url} alt="Creative source" className="mediaLayer" />}
 
               {project.overlays.map((overlay) => (
                 <div
