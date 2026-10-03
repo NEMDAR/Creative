@@ -3,7 +3,7 @@
 import { ChangeEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { CreatorProject, Overlay, RatioKey, TextOverlay } from "../lib/editor/types";
 import { loadPhaseOneDraft, savePhaseOneDraft } from "../lib/editor/storage";
-import { buildSequentialTimeline, createEmptyTimeline, deleteTimelineClip, duplicateTimelineClip, formatTimelineTime, moveTimelineClip, resolveTimelineTime, setTimelinePlayhead, splitTimelineClip, timelineTimeForClip, trimTimelineClip, type TimelineClip } from "../lib/editor/timeline";
+import { buildSequentialTimeline, createEmptyTimeline, deleteTimelineClip, duplicateTimelineClip, formatTimelineTime, getMaxTransitionDuration, getNextTimelineClip, getTransitionVisualState, isCrossfadeEligible, moveTimelineClip, resolveTimelineTime, setTimelineClipTransition, setTimelinePlayhead, splitTimelineClip, timelineTimeForClip, trimTimelineClip, type TimelineClip, type TransitionType } from "../lib/editor/timeline";
 
 const RATIOS: Record<RatioKey, { w: number; h: number }> = {
   "9:16": { w: 9, h: 16 },
@@ -131,6 +131,24 @@ export default function PhaseOneEditor() {
   const selectedClip = useMemo(
     () => timeline.tracks[0]?.clips.find((clip) => clip.id === selectedClipId) ?? null,
     [timeline, selectedClipId]
+  );
+
+  const selectedNextClip = useMemo(
+    () => (selectedClip ? getNextTimelineClip(timeline, selectedClip.id) : null),
+    [timeline, selectedClip]
+  );
+
+  const transitionVisual = useMemo(
+    () => getTransitionVisualState(timeline, timeline.playhead),
+    [timeline]
+  );
+
+  const transitionSecondaryMedia = useMemo(
+    () =>
+      transitionVisual.secondaryClip
+        ? mediaItems.find((item) => item.id === transitionVisual.secondaryClip?.assetId) ?? null
+        : null,
+    [mediaItems, transitionVisual.secondaryClip]
   );
 
   useEffect(() => {
@@ -396,6 +414,28 @@ export default function PhaseOneEditor() {
     setTimeline((current) => moveTimelineClip(current, selectedClip.id, direction));
   }
 
+  function updateSelectedTransitionType(type: TransitionType) {
+    if (!selectedClip) return;
+    const duration =
+      selectedClip.transitionOut?.duration ??
+      Math.min(0.6, getMaxTransitionDuration(selectedClip, selectedNextClip));
+    setTimeline((current) =>
+      setTimelineClipTransition(current, selectedClip.id, type, duration || 0.1)
+    );
+  }
+
+  function updateSelectedTransitionDuration(duration: number) {
+    if (!selectedClip?.transitionOut) return;
+    setTimeline((current) =>
+      setTimelineClipTransition(
+        current,
+        selectedClip.id,
+        selectedClip.transitionOut?.type ?? "none",
+        duration
+      )
+    );
+  }
+
   function moveMediaItem(id: string, direction: -1 | 1) {
     setMediaItems((current) => {
       const index = current.findIndex((item) => item.id === id);
@@ -613,7 +653,42 @@ export default function PhaseOneEditor() {
       ? videoRef.current
       : (document.getElementById("creative-image") as HTMLImageElement | null);
     if (!source) return;
+
+    const transitionState = getTransitionVisualState(timeline, timeline.playhead);
+    ctx.save();
+    ctx.globalAlpha =
+      transitionState.primaryClip?.assetId === media.id
+        ? transitionState.primaryOpacity
+        : 1;
     drawCover(ctx, source, canvas.width, canvas.height);
+    ctx.restore();
+
+    if (
+      transitionState.type === "crossfade" &&
+      transitionState.secondaryClip &&
+      transitionState.secondaryOpacity > 0
+    ) {
+      const secondaryMedia = mediaItems.find(
+        (item) => item.id === transitionState.secondaryClip?.assetId
+      );
+      if (secondaryMedia?.kind === "image") {
+        const image = new Image();
+        image.src = secondaryMedia.url;
+        await image.decode();
+        ctx.save();
+        ctx.globalAlpha = transitionState.secondaryOpacity;
+        drawCover(ctx, image, canvas.width, canvas.height);
+        ctx.restore();
+      }
+    }
+
+    if (transitionState.blackOpacity > 0) {
+      ctx.save();
+      ctx.globalAlpha = transitionState.blackOpacity;
+      ctx.fillStyle = "#000000";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.restore();
+    }
 
     for (const overlay of project.overlays.filter((item) => isOverlayActive(item, timeline.playhead))) {
       if (overlay.kind === "text") {
@@ -668,7 +743,20 @@ export default function PhaseOneEditor() {
   ) {
     ctx.fillStyle = "#0b1020";
     ctx.fillRect(0, 0, width, height);
+
+    const transitionState = getTransitionVisualState(timeline, timelineTime);
+    ctx.save();
+    ctx.globalAlpha = transitionState.primaryOpacity;
     drawCover(ctx, source, width, height);
+    ctx.restore();
+
+    if (transitionState.blackOpacity > 0) {
+      ctx.save();
+      ctx.globalAlpha = transitionState.blackOpacity;
+      ctx.fillStyle = "#000000";
+      ctx.fillRect(0, 0, width, height);
+      ctx.restore();
+    }
 
     for (const overlay of project.overlays.filter((item) => isOverlayActive(item, timelineTime))) {
       if (overlay.kind === "text") {
@@ -1104,9 +1192,26 @@ export default function PhaseOneEditor() {
                     }
                   }}
                   className="mediaLayer"
+                  style={{ opacity: transitionVisual.primaryClip?.assetId === media.id ? transitionVisual.primaryOpacity : 1 }}
                 />
               )}
-              {media?.kind === "image" && <img id="creative-image" src={media.url} alt="Creative source" className="mediaLayer" />}
+              {media?.kind === "image" && <img id="creative-image" src={media.url} alt="Creative source" className="mediaLayer" style={{ opacity: transitionVisual.primaryClip?.assetId === media.id ? transitionVisual.primaryOpacity : 1 }} />}
+              {transitionVisual.type === "crossfade" && transitionSecondaryMedia?.kind === "image" && (
+                <img
+                  data-testid="transition-media-layer"
+                  src={transitionSecondaryMedia.url}
+                  alt="Transition source"
+                  className="mediaLayer transitionMediaLayer"
+                  style={{ opacity: transitionVisual.secondaryOpacity }}
+                />
+              )}
+              {transitionVisual.blackOpacity > 0 && (
+                <div
+                  data-testid="transition-blackout"
+                  className="transitionBlackout"
+                  style={{ opacity: transitionVisual.blackOpacity }}
+                />
+              )}
               {audioTrack && <audio ref={audioRef} src={audioTrack.url} preload="auto" />}
 
               {project.overlays.filter((overlay) => isOverlayActive(overlay, timeline.playhead)).map((overlay) => (
@@ -1176,6 +1281,15 @@ export default function PhaseOneEditor() {
                   >
                     <strong>{clip.assetName}</strong>
                     <span>{formatTimelineTime(clip.duration)}</span>
+                    {clip.transitionOut && (
+                      <i
+                        className="transitionBadge"
+                        data-testid="transition-badge"
+                        title={`${clip.transitionOut.type} ${clip.transitionOut.duration.toFixed(1)}s`}
+                      >
+                        {clip.transitionOut.type === "crossfade" ? "XF" : "F"}
+                      </i>
+                    )}
                   </div>
                 ))}
                 <div
@@ -1380,6 +1494,48 @@ export default function PhaseOneEditor() {
                   onChange={(e) => updateSelectedClipTrim("duration", Number(e.target.value))}
                 />
               </label>
+              {selectedNextClip ? (
+                <div className="transitionInspector" data-testid="transition-inspector">
+                  <label>
+                    Transition to next
+                    <select
+                      aria-label="Transition type"
+                      value={selectedClip.transitionOut?.type ?? "none"}
+                      onChange={(e) => updateSelectedTransitionType(e.target.value as TransitionType)}
+                    >
+                      <option value="none">None</option>
+                      <option value="fade">Fade</option>
+                      <option
+                        value="crossfade"
+                        disabled={!isCrossfadeEligible(selectedClip, selectedNextClip)}
+                      >
+                        Crossfade
+                      </option>
+                    </select>
+                  </label>
+                  {selectedClip.transitionOut && (
+                    <label>
+                      Transition duration
+                      <input
+                        aria-label="Transition duration"
+                        type="number"
+                        min={0.1}
+                        max={getMaxTransitionDuration(selectedClip, selectedNextClip)}
+                        step="0.1"
+                        value={selectedClip.transitionOut.duration}
+                        onChange={(e) => updateSelectedTransitionDuration(Number(e.target.value))}
+                      />
+                    </label>
+                  )}
+                  <small>
+                    {isCrossfadeEligible(selectedClip, selectedNextClip)
+                      ? "Fade and image crossfade are available."
+                      : "Fade is available. Crossfade currently requires image → image."}
+                  </small>
+                </div>
+              ) : (
+                <p className="hint">Last clip has no outgoing transition.</p>
+              )}
               <div className="clipActionGrid">
                 <button type="button" onClick={splitSelectedClip}>Split at playhead</button>
                 <button type="button" onClick={duplicateSelectedClip}>Duplicate clip</button>

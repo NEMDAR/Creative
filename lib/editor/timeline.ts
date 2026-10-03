@@ -1,4 +1,10 @@
 export type TimelineClipKind = "video" | "image";
+export type TransitionType = "none" | "fade" | "crossfade";
+
+export type ClipTransition = {
+  type: Exclude<TransitionType, "none">;
+  duration: number;
+};
 
 export type TimelineClip = {
   id: string;
@@ -9,6 +15,7 @@ export type TimelineClip = {
   sourceStart: number;
   duration: number;
   sourceDuration: number | null;
+  transitionOut: ClipTransition | null;
 };
 
 export type TimelineTrack = {
@@ -82,6 +89,7 @@ export function buildSequentialTimeline(
       sourceStart: Math.max(0, input.sourceStart ?? 0),
       duration,
       sourceDuration: input.sourceDuration ?? null,
+      transitionOut: null,
     };
     cursor += duration;
     return clip;
@@ -208,12 +216,14 @@ export function splitTimelineClip(
   const left: TimelineClip = {
     ...clip,
     duration: offset,
+    transitionOut: null,
   };
   const right: TimelineClip = {
     ...clip,
     id: rightClipId,
     sourceStart: clip.kind === "video" ? clip.sourceStart + offset : clip.sourceStart,
     duration: clip.duration - offset,
+    transitionOut: clip.transitionOut,
   };
 
   const next = [...clips];
@@ -262,6 +272,164 @@ export function moveTimelineClip(
   return reflowTimeline(timeline, clips);
 }
 
+export function isCrossfadeEligible(
+  outgoing: TimelineClip,
+  incoming: TimelineClip | null
+) {
+  return Boolean(incoming && outgoing.kind === "image" && incoming.kind === "image");
+}
+
+export function getNextTimelineClip(
+  timeline: TimelineState,
+  clipId: string
+): TimelineClip | null {
+  const clips = timeline.tracks[0]?.clips ?? [];
+  const index = clips.findIndex((clip) => clip.id === clipId);
+  return index >= 0 ? clips[index + 1] ?? null : null;
+}
+
+export function getMaxTransitionDuration(
+  outgoing: TimelineClip,
+  incoming: TimelineClip | null
+) {
+  if (!incoming) return 0;
+  return Math.max(0.1, Math.min(2, outgoing.duration / 2, incoming.duration / 2));
+}
+
+export function setTimelineClipTransition(
+  timeline: TimelineState,
+  clipId: string,
+  type: TransitionType,
+  duration: number
+): TimelineState {
+  const clips = timeline.tracks[0]?.clips ?? [];
+  const index = clips.findIndex((clip) => clip.id === clipId);
+  if (index < 0) return timeline;
+
+  const outgoing = clips[index];
+  const incoming = clips[index + 1] ?? null;
+  if (!incoming || type === "none") {
+    const next = clips.map((clip) =>
+      clip.id === clipId ? { ...clip, transitionOut: null } : clip
+    );
+    return reflowTimeline(timeline, next);
+  }
+
+  if (type === "crossfade" && !isCrossfadeEligible(outgoing, incoming)) {
+    return timeline;
+  }
+
+  const maxDuration = getMaxTransitionDuration(outgoing, incoming);
+  const normalizedDuration = clamp(duration, 0.1, maxDuration);
+  const transitionOut: ClipTransition = {
+    type,
+    duration: normalizedDuration,
+  };
+  const next = clips.map((clip) =>
+    clip.id === clipId ? { ...clip, transitionOut } : clip
+  );
+  return reflowTimeline(timeline, next);
+}
+
+export type TransitionVisualState = {
+  primaryClip: TimelineClip | null;
+  primaryOpacity: number;
+  secondaryClip: TimelineClip | null;
+  secondaryOpacity: number;
+  blackOpacity: number;
+  type: TransitionType;
+  progress: number;
+};
+
+export function getTransitionVisualState(
+  timeline: TimelineState,
+  timelineTime: number
+): TransitionVisualState {
+  const clips = timeline.tracks[0]?.clips ?? [];
+  const resolved = resolveTimelineTime(timeline, timelineTime);
+  if (!resolved) {
+    return {
+      primaryClip: null,
+      primaryOpacity: 1,
+      secondaryClip: null,
+      secondaryOpacity: 0,
+      blackOpacity: 0,
+      type: "none",
+      progress: 0,
+    };
+  }
+
+  const current = resolved.clip;
+  const index = clips.findIndex((clip) => clip.id === current.id);
+  const next = clips[index + 1] ?? null;
+  const previous = index > 0 ? clips[index - 1] : null;
+
+  const outgoingTransition = current.transitionOut;
+  if (outgoingTransition && next) {
+    const transitionStart =
+      current.timelineStart + current.duration - outgoingTransition.duration;
+    if (timelineTime >= transitionStart) {
+      const progress = clamp(
+        (timelineTime - transitionStart) / outgoingTransition.duration,
+        0,
+        1
+      );
+
+      if (
+        outgoingTransition.type === "crossfade" &&
+        isCrossfadeEligible(current, next)
+      ) {
+        return {
+          primaryClip: current,
+          primaryOpacity: 1 - progress,
+          secondaryClip: next,
+          secondaryOpacity: progress,
+          blackOpacity: 0,
+          type: "crossfade",
+          progress,
+        };
+      }
+
+      return {
+        primaryClip: current,
+        primaryOpacity: 1 - progress,
+        secondaryClip: null,
+        secondaryOpacity: 0,
+        blackOpacity: progress,
+        type: "fade",
+        progress,
+      };
+    }
+  }
+
+  const incomingTransition = previous?.transitionOut;
+  if (incomingTransition?.type === "fade") {
+    const elapsed = timelineTime - current.timelineStart;
+    if (elapsed >= 0 && elapsed <= incomingTransition.duration) {
+      const progress = clamp(elapsed / incomingTransition.duration, 0, 1);
+      return {
+        primaryClip: current,
+        primaryOpacity: progress,
+        secondaryClip: null,
+        secondaryOpacity: 0,
+        blackOpacity: 1 - progress,
+        type: "fade",
+        progress,
+      };
+    }
+  }
+
+  return {
+    primaryClip: current,
+    primaryOpacity: 1,
+    secondaryClip: null,
+    secondaryOpacity: 0,
+    blackOpacity: 0,
+    type: "none",
+    progress: 0,
+  };
+}
+
 export function formatTimelineTime(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) return "00:00.0";
   const minutes = Math.floor(seconds / 60);
@@ -277,7 +445,7 @@ function reflowTimeline(
   playhead = timeline.playhead
 ): TimelineState {
   let cursor = 0;
-  const normalized = clips.map((clip) => {
+  const positioned = clips.map((clip) => {
     const next = {
       ...clip,
       timelineStart: cursor,
@@ -285,6 +453,33 @@ function reflowTimeline(
     };
     cursor += next.duration;
     return next;
+  });
+
+  const normalized = positioned.map((clip, index) => {
+    const incoming = positioned[index + 1] ?? null;
+    const transition = clip.transitionOut;
+    if (!transition || !incoming) {
+      return { ...clip, transitionOut: null };
+    }
+
+    if (
+      transition.type === "crossfade" &&
+      !isCrossfadeEligible(clip, incoming)
+    ) {
+      return { ...clip, transitionOut: null };
+    }
+
+    return {
+      ...clip,
+      transitionOut: {
+        ...transition,
+        duration: clamp(
+          transition.duration,
+          0.1,
+          getMaxTransitionDuration(clip, incoming)
+        ),
+      },
+    };
   });
 
   return {

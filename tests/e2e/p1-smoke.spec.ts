@@ -219,6 +219,7 @@ test("P2 clip editing supports reorder split trim duplicate and delete", async (
   await expect(clips.nth(1).locator("strong")).toHaveText("alpha.png");
 
   const surface = page.getByTestId("timeline-surface");
+  await surface.scrollIntoViewIfNeeded();
   const box = await surface.boundingBox();
   if (!box) throw new Error("Timeline surface has no layout box.");
   await page.mouse.click(box.x + box.width * 0.75, box.y + 1);
@@ -314,4 +315,45 @@ test("P2 audio track supports placement gain and fades", async ({ page }) => {
   await expect(audioBar).toHaveAttribute("data-start", "1.00");
   await expect(audioBar).toHaveAttribute("data-duration", "2.00");
   await expect(audioBar).toContainText("50%");
+});
+
+test("P2 basic transitions preview deterministic crossfade and fade states", async ({ page }) => {
+  await page.goto("/");
+
+  const sourceInput = page.locator('input[accept="video/*,image/*"]');
+  await sourceInput.setInputFiles([
+    {
+      name: "transition-a.png",
+      mimeType: "image/png",
+      buffer: PNG_1X1,
+    },
+    {
+      name: "transition-b.png",
+      mimeType: "image/png",
+      buffer: PNG_1X1,
+    },
+  ]);
+
+  await expect(page.getByTestId("timeline-clip")).toHaveCount(2);
+  await page.getByLabel("Transition type").selectOption("crossfade");
+  await page.getByLabel("Transition duration").fill("1");
+
+  await expect(page.getByTestId("transition-badge")).toHaveText("XF");
+
+  const surface = page.getByTestId("timeline-surface");
+  const box = await surface.boundingBox();
+  if (!box) throw new Error("Timeline surface has no layout box.");
+
+  await surface.evaluate((element) => { const rect = element.getBoundingClientRect(); element.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: rect.left + rect.width * 0.45, clientY: rect.top + 1 })); });
+  await expect(page.getByTestId("timeline-clock")).toHaveText("00:04.5");
+  await expect(page.locator("#creative-image")).toHaveCSS("opacity", "0.5");
+  await expect(page.getByTestId("transition-media-layer")).toBeVisible();
+  await expect(page.getByTestId("transition-media-layer")).toHaveCSS("opacity", "0.5");
+  await expect(page.getByTestId("transition-blackout")).toHaveCount(0);
+
+  await page.getByLabel("Transition type").selectOption("fade");
+  await expect(page.getByTestId("transition-badge")).toHaveText("F");
+  await expect(page.getByTestId("transition-media-layer")).toHaveCount(0);
+  await expect(page.getByTestId("transition-blackout")).toBeVisible();
+  await expect(page.getByTestId("transition-blackout")).toHaveCSS("opacity", "0.5");
 });
