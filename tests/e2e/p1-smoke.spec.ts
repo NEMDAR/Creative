@@ -55,6 +55,7 @@ test("P1 image creative can be edited, saved, exported and restored", async ({ p
   await page.getByRole("button", { name: "Load draft" }).click();
 
   await expect(page.getByText("إعلان تجريبي")).toBeVisible();
+  await expect(page.locator("#creative-image")).toBeVisible();
   await expect(page.locator('.overlay img[alt="Overlay"]')).toBeVisible();
   await expect(page.getByRole("button", { name: "1:1" })).toHaveClass(/active/);
 });
@@ -67,10 +68,10 @@ test("P1 undo/redo restores editor state", async ({ page }) => {
   await page.getByLabel("Text").fill("Second");
 
   await page.getByRole("button", { name: "Undo" }).click();
-  await expect(page.getByText("First")).toBeVisible();
+  await expect(page.getByLabel("Text")).toHaveValue("First");
 
   await page.getByRole("button", { name: "Redo" }).click();
-  await expect(page.getByText("Second")).toBeVisible();
+  await expect(page.getByLabel("Text")).toHaveValue("Second");
 });
 
 test("P1 video trim exports a timed WebM asset", async ({ page }) => {
@@ -87,13 +88,22 @@ test("P1 video trim exports a timed WebM asset", async ({ page }) => {
   await expect(video).toBeVisible();
   await expect.poll(() => video.evaluate((node: HTMLVideoElement) => node.duration)).toBeGreaterThan(0);
 
+  await page.getByLabel("Trim start").fill("0.1");
+  await page.getByLabel("Trim end").fill("0.4");
   await page.getByRole("button", { name: "+ Text" }).click();
   await page.getByLabel("Text").fill("Video export");
 
-  const downloadPromise = page.waitForEvent("download", { timeout: 30_000 });
+  const downloadPromise = page.waitForEvent("download", { timeout: 15_000 });
   await page.getByRole("button", { name: "Export video" }).click();
-  const download = await downloadPromise;
 
+  const terminalState = page.locator(".exportState.success, .exportState.error");
+  await terminalState.waitFor({ state: "visible", timeout: 15_000 });
+  const className = await terminalState.getAttribute("class");
+  if (className?.includes("error")) {
+    throw new Error(`Video export error: ${await terminalState.textContent()}`);
+  }
+
+  const download = await downloadPromise;
   expect(download.suggestedFilename()).toMatch(/\.webm$/);
-  await expect(page.getByText("Export ready")).toBeVisible();
+  await expect(terminalState).toContainText("Export ready");
 });
