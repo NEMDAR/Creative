@@ -4,7 +4,7 @@ import { ChangeEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointe
 import { CAPTION_STYLE_PRESETS, captionCueAtTime, cloneCaptionStylePreset, normalizeCaptionStyle, normalizeCaptionTrack, type CaptionCue, type CaptionEmphasis, type CaptionLanguage, type CaptionPosition, type CaptionPresetId, type CaptionStyleConfig, type CaptionTrack } from "../lib/editor/captions";
 import type { CreatorProject, Overlay, RatioKey, TextOverlay } from "../lib/editor/types";
 import { listPhaseTwoSnapshots, loadPhaseOneDraft, loadPhaseTwoDraft, loadPhaseTwoSnapshot, savePhaseTwoDraft, savePhaseTwoSnapshot, type HydratedPhaseTwoState, type PhaseTwoSaveInput, type PhaseTwoSnapshotSummary } from "../lib/editor/storage";
-import { buildSequentialTimeline, createEmptyTimeline, deleteTimelineClip, duplicateTimelineClip, formatTimelineTime, getMaxTransitionDuration, getNextTimelineClip, getTransitionVisualState, isCrossfadeEligible, moveTimelineClip, removeTimelineRange, resolveTimelineTime, setTimelineClipTransition, setTimelinePlayhead, splitTimelineClip, timelineTimeForClip, trimTimelineClip, updateTimelineClipTransform, type ClipFitMode, type TimelineClip, type TransitionType } from "../lib/editor/timeline";
+import { buildSequentialTimeline, createEmptyTimeline, deleteTimelineClip, duplicateTimelineClip, formatTimelineTime, getMaxTransitionDuration, getNextTimelineClip, getTransitionVisualState, isCrossfadeEligible, moveTimelineClip, removeTimelineRange, resolveTimelineTime, setTimelineClipTransition, setTimelinePlayhead, splitTimelineClip, timelineTimeForClip, trimTimelineClip, updateTimelineClipTransform, type ClipFitMode, type TimelineClip, type TimelineState, type TransitionType } from "../lib/editor/timeline";
 import type { ServerRenderManifest } from "../lib/render/server-types";
 
 const RATIOS: Record<RatioKey, { w: number; h: number }> = {
@@ -30,6 +30,7 @@ type MediaState = MediaItem | null;
 type AudioTrackItem = { id: string; url: string; name: string; type: string; blob: Blob; duration: number; startTime: number; gain: number; fadeIn: number; fadeOut: number };
 type SilenceReviewRange = { id: string; startTime: number; endTime: number; duration: number; selected: boolean };
 type SilenceSourceKind = "video" | "audio";
+type SceneSuggestion = { id: string; time: number; selected: boolean };
 
 type ServerRenderState = {
   jobId: string | null;
@@ -241,6 +242,11 @@ export default function PhaseOneEditor() {
   const [silenceError, setSilenceError] = useState<string | null>(null);
   const [silenceThresholdDb, setSilenceThresholdDb] = useState(-40);
   const [silenceMinDuration, setSilenceMinDuration] = useState(0.35);
+  const [sceneSuggestions, setSceneSuggestions] = useState<SceneSuggestion[]>([]);
+  const [sceneState, setSceneState] = useState<"idle" | "analyzing" | "ready" | "error">("idle");
+  const [sceneError, setSceneError] = useState<string | null>(null);
+  const [sceneThreshold, setSceneThreshold] = useState(0.35);
+  const [sceneBackup, setSceneBackup] = useState<TimelineState | null>(null);
   const [timelineZoom, setTimelineZoom] = useState(1);
   const [snapEnabled, setSnapEnabled] = useState(true);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -938,6 +944,110 @@ export default function PhaseOneEditor() {
       mediaItems.find((item) => item.id === nextClip.assetId) ?? null;
     setMedia(nextMedia);
     setDuration(nextMedia?.kind === "video" ? nextMedia.duration : 0);
+  }
+
+  async function detectScenes() {
+    const clip =
+      selectedClip?.kind === "video"
+        ? selectedClip
+        : timeline.tracks[0]?.clips.find((item) => item.kind === "video") ?? null;
+    const videoSource = clip
+      ? mediaItems.find((item) => item.id === clip.assetId && item.kind === "video") ?? null
+      : null;
+
+    if (!clip || !videoSource) {
+      setSceneState("error");
+      setSceneError("Select a video clip before detecting scene changes.");
+      return;
+    }
+
+    setSceneState("analyzing");
+    setSceneError(null);
+
+    try {
+      const form = new FormData();
+      form.append("media", videoSource.blob, videoSource.name);
+      form.append("threshold", String(sceneThreshold));
+
+      const response = await fetch("/api/analyze/scenes", {
+        method: "POST",
+        body: form,
+      });
+      const payload = (await response.json()) as {
+        boundaries?: number[];
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(payload.error || "Scene analysis failed.");
+      }
+
+      const speed = Math.max(0.01, clip.transform.speed);
+      const sourceStart = clip.sourceStart;
+      const sourceEnd = sourceStart + clip.duration * speed;
+      const suggestions = (payload.boundaries ?? [])
+        .filter((time) => time > sourceStart + 0.05 && time < sourceEnd - 0.05)
+        .map((time, index) => ({
+          id: `scene-${index}-${crypto.randomUUID()}`,
+          time: clip.timelineStart + (time - sourceStart) / speed,
+          selected: true,
+        }));
+
+      setSceneSuggestions(suggestions);
+      setSceneState("ready");
+    } catch (error) {
+      setSceneSuggestions([]);
+      setSceneState("error");
+      setSceneError(
+        error instanceof Error ? error.message : "Unable to detect scenes."
+      );
+    }
+  }
+
+  function applySceneSplits() {
+    const selected = sceneSuggestions
+      .filter((scene) => scene.selected)
+      .sort((a, b) => a.time - b.time);
+    if (selected.length === 0) return;
+
+    setSceneBackup(timeline);
+    let nextTimeline = timeline;
+
+    for (const scene of selected) {
+      const resolved = resolveTimelineTime(nextTimeline, scene.time);
+      if (!resolved) continue;
+      const offset = scene.time - resolved.clip.timelineStart;
+      nextTimeline = splitTimelineClip(
+        nextTimeline,
+        resolved.clip.id,
+        offset,
+        `clip-${crypto.randomUUID()}`
+      );
+    }
+
+    setTimeline(nextTimeline);
+    setSceneSuggestions([]);
+    setSceneState("idle");
+    setSceneError(null);
+  }
+
+  function undoSceneSplits() {
+    if (!sceneBackup) return;
+    setTimeline(sceneBackup);
+    setSceneBackup(null);
+    setSceneSuggestions([]);
+    setSceneState("idle");
+
+    const clip =
+      resolveTimelineTime(sceneBackup, sceneBackup.playhead)?.clip ??
+      sceneBackup.tracks[0]?.clips[0] ??
+      null;
+    setSelectedClipId(clip?.id ?? null);
+
+    if (clip) {
+      const item = mediaItems.find((candidate) => candidate.id === clip.assetId) ?? null;
+      setMedia(item);
+      setDuration(item?.kind === "video" ? item.duration : 0);
+    }
   }
 
   function selectMediaItem(item: MediaItem) {
@@ -2909,6 +3019,73 @@ export default function PhaseOneEditor() {
                   Cut spoken range from media
                 </button>
               </div>
+            )}
+          </div>
+
+          <h2>Scene detection</h2>
+          <div className="sceneInspector" data-testid="scene-inspector">
+            <label>
+              Scene threshold
+              <input
+                aria-label="Scene threshold"
+                type="number"
+                min={0.05}
+                max={0.9}
+                step={0.05}
+                value={sceneThreshold}
+                onChange={(e) => setSceneThreshold(Number(e.target.value))}
+              />
+            </label>
+            <button
+              type="button"
+              className="toolButton"
+              onClick={() => void detectScenes()}
+              disabled={sceneState === "analyzing"}
+            >
+              {sceneState === "analyzing" ? "Detecting scenes…" : "Detect scenes"}
+            </button>
+            {sceneError && <p className="captionError">{sceneError}</p>}
+            {sceneSuggestions.length > 0 && (
+              <div className="sceneSuggestionList" data-testid="scene-suggestion-list">
+                {sceneSuggestions.map((scene) => (
+                  <label className="sceneSuggestion" key={scene.id}>
+                    <input
+                      type="checkbox"
+                      aria-label={`Scene boundary ${formatTimelineTime(scene.time)}`}
+                      checked={scene.selected}
+                      onChange={(e) =>
+                        setSceneSuggestions((current) =>
+                          current.map((item) =>
+                            item.id === scene.id
+                              ? { ...item, selected: e.target.checked }
+                              : item
+                          )
+                        )
+                      }
+                    />
+                    <span>{formatTimelineTime(scene.time)}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+            {sceneSuggestions.length > 0 && (
+              <button
+                type="button"
+                className="toolButton"
+                onClick={applySceneSplits}
+                disabled={!sceneSuggestions.some((scene) => scene.selected)}
+              >
+                Apply selected scene splits
+              </button>
+            )}
+            {sceneBackup && (
+              <button
+                type="button"
+                className="ghost sceneUndo"
+                onClick={undoSceneSplits}
+              >
+                Undo scene splits
+              </button>
             )}
           </div>
 

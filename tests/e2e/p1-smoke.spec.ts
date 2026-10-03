@@ -846,3 +846,35 @@ test("P3 silence detection reviews ranges before applying video cuts", async ({ 
     .poll(async () => Number(await page.getByLabel("Clip duration").inputValue()))
     .toBeCloseTo(initialDuration - firstRangeDuration, 1);
 });
+
+test("P3 scene detection offers reviewable reversible split suggestions", async ({ page }) => {
+  await page.goto("/");
+
+  await page.locator('input[accept="video/*,image/*"]').setInputFiles(
+    "tests/fixtures/scene-pattern.webm"
+  );
+
+  const video = page.locator("video");
+  await expect(video).toBeVisible();
+  await expect
+    .poll(() => video.evaluate((node: HTMLVideoElement) => node.duration))
+    .toBeGreaterThan(2.9);
+
+  await page.getByLabel("Scene threshold").fill("0.10");
+  await page.getByRole("button", { name: "Detect scenes" }).click();
+
+  const suggestions = page.locator(".sceneSuggestion");
+  await expect(suggestions).toHaveCount(2, { timeout: 10_000 });
+  await expect(suggestions.nth(0)).toContainText("00:01.0");
+  await expect(suggestions.nth(1)).toContainText("00:02.0");
+
+  await suggestions.nth(1).locator('input[type="checkbox"]').uncheck();
+  await page.getByRole("button", { name: "Apply selected scene splits" }).click();
+
+  await expect(page.getByTestId("timeline-clip")).toHaveCount(2);
+  await expect(page.getByRole("button", { name: "Undo scene splits" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Undo scene splits" }).click();
+  await expect(page.getByTestId("timeline-clip")).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "Undo scene splits" })).toHaveCount(0);
+});
