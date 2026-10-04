@@ -86,7 +86,7 @@ test("P1 image creative can be edited, saved, exported and restored", async ({ p
     .toBeGreaterThan(0);
 
   await page.getByRole("button", { name: "+ Text", exact: true }).click();
-  await page.getByLabel("Text", { exact: true }).fill("Ø¥Ø¹Ù„Ø§Ù† ØªØ¬Ø±ÙŠØ¨ÙŠ");
+  await page.getByLabel("Text", { exact: true }).fill("Ã˜Â¥Ã˜Â¹Ã™â€žÃ˜Â§Ã™â€  Ã˜ÂªÃ˜Â¬Ã˜Â±Ã™Å Ã˜Â¨Ã™Å ");
   await page.getByLabel("Alignment").selectOption("right");
   await page.getByLabel("Opacity").first().fill("0.8");
 
@@ -110,10 +110,8 @@ test("P1 image creative can be edited, saved, exported and restored", async ({ p
   await page.getByRole("button", { name: "Save draft" }).click();
 
   await page.reload();
-  page.once("dialog", (dialog) => dialog.accept());
-  await page.getByRole("button", { name: "Load draft" }).click();
 
-  await expect(page.getByText("Ø¥Ø¹Ù„Ø§Ù† ØªØ¬Ø±ÙŠØ¨ÙŠ")).toBeVisible();
+  await expect(page.getByText("Ã˜Â¥Ã˜Â¹Ã™â€žÃ˜Â§Ã™â€  Ã˜ÂªÃ˜Â¬Ã˜Â±Ã™Å Ã˜Â¨Ã™Å ")).toBeVisible();
   await expect(page.locator("#creative-image")).toBeVisible();
   await expect(page.locator('.overlay img[alt="Overlay"]')).toBeVisible();
   await expect(page.getByRole("button", { name: "1:1", exact: true })).toHaveClass(/active/);
@@ -153,7 +151,7 @@ test("P1 video trim exports a timed WebM asset", async ({ page }) => {
   await expect(page.getByRole("button", { name: "9:16", exact: true })).toHaveClass(/active/);
 
   await page.getByRole("button", { name: "+ Text", exact: true }).click();
-  await page.getByLabel("Text", { exact: true }).fill("ÙÙŠØ¯ÙŠÙˆ ØªØ¬Ø±ÙŠØ¨ÙŠ Video");
+  await page.getByLabel("Text", { exact: true }).fill("Ã™ÂÃ™Å Ã˜Â¯Ã™Å Ã™Ë† Ã˜ÂªÃ˜Â¬Ã˜Â±Ã™Å Ã˜Â¨Ã™Å  Video");
 
   const logoInput = page.getByLabel("+ Logo / image", { exact: true });
   await logoInput.setInputFiles({
@@ -611,7 +609,7 @@ test("P2 durable server render queue exports a real MP4", async ({ page }) => {
   const info = await stat(downloadedPath);
   expect(info.size).toBeGreaterThan(1_000);
 
-  await expect(renderState).toContainText("Complete Â· 100%");
+  await expect(renderState).toContainText("Complete Ã‚Â· 100%");
 });
 
 test("P2 representative long project stays responsive and renders MP4", async ({ page }) => {
@@ -724,12 +722,12 @@ test("P3 automatic Arabic captions generate edit preview and persist", async ({ 
 
   const preview = page.getByTestId("caption-preview");
   await expect(preview).toBeVisible();
-  await expect(preview).toContainText("Ù…Ø±Ø­Ø¨Ù‹Ø§ Ø¨Ùƒ ÙÙŠ Ù†Ù…Ø¯Ø§Ø± ÙƒØ±ÙŠØªÙŠÙ Ø³ØªÙˆØ¯ÙŠÙˆ");
+  await expect(preview).toContainText("Ã™â€¦Ã˜Â±Ã˜Â­Ã˜Â¨Ã™â€¹Ã˜Â§ Ã˜Â¨Ã™Æ’ Ã™ÂÃ™Å  Ã™â€ Ã™â€¦Ã˜Â¯Ã˜Â§Ã˜Â± Ã™Æ’Ã˜Â±Ã™Å Ã˜ÂªÃ™Å Ã™Â Ã˜Â³Ã˜ÂªÃ™Ë†Ã˜Â¯Ã™Å Ã™Ë†");
   await expect(preview).toHaveAttribute("dir", "rtl");
 
   const captionText = page.getByLabel("Caption text");
-  await captionText.fill("Ù†Ù…Ø¯Ø§Ø± ÙƒØ±ÙŠØªÙŠÙ â€” ÙƒØ§Ø¨ØªØ´Ù† Ù…Ø¹Ø¯Ù„");
-  await expect(preview).toHaveText("Ù†Ù…Ø¯Ø§Ø± ÙƒØ±ÙŠØªÙŠÙ â€” ÙƒØ§Ø¨ØªØ´Ù† Ù…Ø¹Ø¯Ù„");
+  await captionText.fill("Ã™â€ Ã™â€¦Ã˜Â¯Ã˜Â§Ã˜Â± Ã™Æ’Ã˜Â±Ã™Å Ã˜ÂªÃ™Å Ã™Â Ã¢â‚¬â€ Ã™Æ’Ã˜Â§Ã˜Â¨Ã˜ÂªÃ˜Â´Ã™â€  Ã™â€¦Ã˜Â¹Ã˜Â¯Ã™â€ž");
+  await expect(preview).toHaveText("Ã™â€ Ã™â€¦Ã˜Â¯Ã˜Â§Ã˜Â± Ã™Æ’Ã˜Â±Ã™Å Ã˜ÂªÃ™Å Ã™Â Ã¢â‚¬â€ Ã™Æ’Ã˜Â§Ã˜Â¨Ã˜ÂªÃ˜Â´Ã™â€  Ã™â€¦Ã˜Â¹Ã˜Â¯Ã™â€ž");
 
   await page.getByLabel("Caption end").fill("1.1");
   await expect(page.locator(".captionCue").first()).toContainText("00:01.1");
@@ -742,8 +740,8 @@ test("P3 automatic Arabic captions generate edit preview and persist", async ({ 
   await page.reload();
 
   await expect(page.getByTestId("caption-meta")).toContainText("ar", { timeout: 5_000 });
-  await expect(page.getByLabel("Caption text")).toHaveValue("Ù†Ù…Ø¯Ø§Ø± ÙƒØ±ÙŠØªÙŠÙ â€” ÙƒØ§Ø¨ØªØ´Ù† Ù…Ø¹Ø¯Ù„");
-  await expect(page.getByTestId("caption-preview")).toHaveText("Ù†Ù…Ø¯Ø§Ø± ÙƒØ±ÙŠØªÙŠÙ â€” ÙƒØ§Ø¨ØªØ´Ù† Ù…Ø¹Ø¯Ù„");
+  await expect(page.getByLabel("Caption text")).toHaveValue("Ã™â€ Ã™â€¦Ã˜Â¯Ã˜Â§Ã˜Â± Ã™Æ’Ã˜Â±Ã™Å Ã˜ÂªÃ™Å Ã™Â Ã¢â‚¬â€ Ã™Æ’Ã˜Â§Ã˜Â¨Ã˜ÂªÃ˜Â´Ã™â€  Ã™â€¦Ã˜Â¹Ã˜Â¯Ã™â€ž");
+  await expect(page.getByTestId("caption-preview")).toHaveText("Ã™â€ Ã™â€¦Ã˜Â¯Ã˜Â§Ã˜Â± Ã™Æ’Ã˜Â±Ã™Å Ã˜ÂªÃ™Å Ã™Â Ã¢â‚¬â€ Ã™Æ’Ã˜Â§Ã˜Â¨Ã˜ÂªÃ˜Â´Ã™â€  Ã™â€¦Ã˜Â¹Ã˜Â¯Ã™â€ž");
 });
 
 test("P3 caption style presets control typography safe-zone and persist", async ({ page }) => {
@@ -1097,7 +1095,7 @@ test("P3 marketing template creates a brand-safe editable project and persists e
 
   await page.getByRole("button", { name: "Start template Product Spotlight" }).click();
 
-  await expect(page.getByRole("textbox", { name: "Name", exact: true })).toHaveValue("Template Brand â€” Product Spotlight");
+  await expect(page.getByRole("textbox", { name: "Name", exact: true })).toHaveValue("Template Brand Ã¢â‚¬â€ Product Spotlight");
   await expect(page.getByRole("button", { name: "9:16", exact: true })).toHaveClass(/active/);
   await expect(page.locator(".stage .overlay span").filter({ hasText: "YOUR MAIN HOOK" })).toBeVisible();
   await expect(page.locator(".stage .overlay span").filter({ hasText: "Add one clear benefit" })).toBeVisible();
@@ -1117,7 +1115,7 @@ test("P3 marketing template creates a brand-safe editable project and persists e
 
   await page.reload();
 
-  await expect(page.getByRole("textbox", { name: "Name", exact: true })).toHaveValue("Template Brand â€” Product Spotlight");
+  await expect(page.getByRole("textbox", { name: "Name", exact: true })).toHaveValue("Template Brand Ã¢â‚¬â€ Product Spotlight");
   await expect(page.locator(".stage .overlay span").filter({ hasText: "Editable campaign hook" })).toBeVisible();
   await expect(page.locator('.stage .overlay img[alt="Overlay"]')).toHaveCount(1);
 });
@@ -1133,7 +1131,7 @@ test("P3 AI command bar previews validated edits applies atomically and supports
   await expect(plan).toBeVisible();
   await expect(plan.locator("li")).toHaveCount(2);
   await expect(plan).toContainText("Set canvas ratio to 4:5");
-  await expect(plan).toContainText("Add text â€œLimited offerâ€");
+  await expect(plan).toContainText("Add text Ã¢â‚¬Å“Limited offerÃ¢â‚¬Â");
 
   await expect(page.getByRole("button", { name: "9:16", exact: true })).toHaveClass(/active/);
   await expect(page.locator(".stage .overlay span").filter({ hasText: "Limited offer" })).toHaveCount(0);
@@ -1147,12 +1145,12 @@ test("P3 AI command bar previews validated edits applies atomically and supports
   await expect(page.getByRole("button", { name: "9:16", exact: true })).toHaveClass(/active/);
   await expect(page.locator(".stage .overlay span").filter({ hasText: "Limited offer" })).toHaveCount(0);
 
-  await command.fill("Ø£Ø¶Ù Ù†Øµ: Ø¹Ø±Ø¶ Ø®Ø§Øµ");
+  await command.fill("Ã˜Â£Ã˜Â¶Ã™Â Ã™â€ Ã˜Âµ: Ã˜Â¹Ã˜Â±Ã˜Â¶ Ã˜Â®Ã˜Â§Ã˜Âµ");
   await page.getByRole("button", { name: "Preview command" }).click();
-  await expect(page.getByTestId("command-plan")).toContainText("Ø¹Ø±Ø¶ Ø®Ø§Øµ");
+  await expect(page.getByTestId("command-plan")).toContainText("Ã˜Â¹Ã˜Â±Ã˜Â¶ Ã˜Â®Ã˜Â§Ã˜Âµ");
   await page.getByRole("button", { name: "Apply actions" }).click();
 
-  const arabicText = page.locator(".stage .overlay span").filter({ hasText: "Ø¹Ø±Ø¶ Ø®Ø§Øµ" });
+  const arabicText = page.locator(".stage .overlay span").filter({ hasText: "Ã˜Â¹Ã˜Â±Ã˜Â¶ Ã˜Â®Ã˜Â§Ã˜Âµ" });
   await expect(arabicText).toBeVisible();
   await expect(arabicText).toHaveCSS("direction", "rtl");
 });
@@ -1271,15 +1269,15 @@ test("P4 generates text video image video and voiceover as editable persisted as
 
   await page.getByLabel("Video prompt").fill("Slow cinematic camera push with premium lighting");
   await page.getByLabel("Video duration").fill("6");
-  await page.getByRole("button", { name: "Image â†’ Video" }).click();
+  await page.getByRole("button", { name: "Image Ã¢â€ â€™ Video" }).click();
   await expect(page.locator(".assetCard")).toHaveCount(2);
   await expect(page.getByTestId("asset-generation-meta").nth(1)).toContainText("image_to_video");
 
-  await page.getByRole("button", { name: "Text â†’ Video" }).click();
+  await page.getByRole("button", { name: "Text Ã¢â€ â€™ Video" }).click();
   await expect(page.locator(".assetCard")).toHaveCount(3);
   await expect(page.getByTestId("asset-generation-meta").nth(2)).toContainText("video_generate");
 
-  await page.getByLabel("Voiceover text").fill("Ø§ÙƒØªØ´Ù Ù…Ø´Ø±ÙˆØ¹Ùƒ Ø§Ù„Ù‚Ø§Ø¯Ù… Ù…Ø¹ Ù†Ù…Ø¯Ø§Ø±");
+  await page.getByLabel("Voiceover text").fill("Ã˜Â§Ã™Æ’Ã˜ÂªÃ˜Â´Ã™Â Ã™â€¦Ã˜Â´Ã˜Â±Ã™Ë†Ã˜Â¹Ã™Æ’ Ã˜Â§Ã™â€žÃ™â€šÃ˜Â§Ã˜Â¯Ã™â€¦ Ã™â€¦Ã˜Â¹ Ã™â€ Ã™â€¦Ã˜Â¯Ã˜Â§Ã˜Â±");
   await page.getByLabel("Voiceover language").selectOption("ar");
   await page.getByRole("button", { name: "Generate voiceover" }).click();
 
@@ -1388,15 +1386,15 @@ test("P5 marketing brief produces editable concepts and a scene plan without inv
 
   await expect(page.getByTestId("creative-concept")).toHaveCount(3);
   const concepts = page.getByTestId("creative-concept");
-  await expect(concepts.nth(0)).toContainText("Problem â†’ Outcome");
+  await expect(concepts.nth(0)).toContainText("Problem Ã¢â€ â€™ Outcome");
   await expect(concepts.nth(1)).toContainText("Product First");
   await expect(concepts.nth(2)).toContainText("Offer Momentum");
   await expect(page.getByTestId("concept-grid")).not.toContainText("ROI");
   await expect(page.getByTestId("concept-grid")).not.toContainText("guaranteed");
 
-  await page.getByLabel("Problem â†’ Outcome hook").fill("Create campaign assets without starting from zero.");
-  await page.getByLabel("Problem â†’ Outcome CTA").fill("Request your demo");
-  await page.getByRole("button", { name: "Use concept â†’ scene plan" }).first().click();
+  await page.getByLabel("Problem Ã¢â€ â€™ Outcome hook").fill("Create campaign assets without starting from zero.");
+  await page.getByLabel("Problem Ã¢â€ â€™ Outcome CTA").fill("Request your demo");
+  await page.getByRole("button", { name: "Use concept Ã¢â€ â€™ scene plan" }).first().click();
 
   await expect(page.getByTestId("storyboard-meta")).toContainText("concept-scene-plan-v1");
   await expect(page.getByTestId("storyboard-scene").first()).toContainText("Scene 1");
@@ -1520,7 +1518,7 @@ test("P5 language variants preserve master linkage and experiments stay bounded 
   await expect(page.getByTestId("experiment-grid")).toContainText("Master");
 
   await page.getByTestId("campaign-experiment").nth(1).getByRole("button", { name: "Apply experiment" }).click();
-  await expect(page.getByLabel("Problem â†’ Outcome hook")).toHaveValue(/Quick take:/);
+  await expect(page.getByLabel("Problem Ã¢â€ â€™ Outcome hook")).toHaveValue(/Quick take:/);
 
   await expect(page.getByTestId("save-state")).toHaveText("Saved", { timeout: 5_000 });
   await page.reload();
@@ -1941,7 +1939,6 @@ test("P6 proxy media swaps preview source and persists with local draft", async 
   await page.getByRole("button", { name: "Save draft" }).click();
 
   await page.reload();
-  page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Load draft" }).click();
 
   await expect(page.locator("#creative-image")).toHaveAttribute("data-preview-source", "proxy");
