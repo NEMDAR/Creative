@@ -2228,3 +2228,135 @@ test("P7 approved publishing handoff scopes connector and persists calendar sche
   await expect(page.getByTestId("publishing-handoff")).toContainText("instagram");
   await expect(page.getByTestId("publishing-handoff")).toContainText("scheduled");
 });
+
+test("P7 external API authenticates projects jobs and webhook state changes", async ({ request }) => {
+  const headers = { "x-nemdar-api-key": "test-api-key" };
+
+  const unauthorized = await request.get("/api/v1/projects");
+  expect(unauthorized.status()).toBe(401);
+
+  const webhookResponse = await request.post("/api/v1/webhooks", {
+    headers,
+    data: {
+      url: "https://example.com/nemdar-hook",
+      eventTypes: ["project.created", "job.created", "job.status_changed"],
+    },
+  });
+  expect(webhookResponse.status()).toBe(201);
+
+  const projectResponse = await request.post("/api/v1/projects", {
+    headers,
+    data: { name: "API Campaign", metadata: { source: "e2e" } },
+  });
+  expect(projectResponse.status()).toBe(201);
+  const project = await projectResponse.json();
+  expect(project.name).toBe("API Campaign");
+
+  const jobResponse = await request.post("/api/v1/jobs", {
+    headers,
+    data: {
+      projectId: project.id,
+      type: "render",
+      payload: { ratio: "9:16" },
+    },
+  });
+  expect(jobResponse.status()).toBe(201);
+  const job = await jobResponse.json();
+  expect(job.status).toBe("queued");
+
+  const updateResponse = await request.patch(`/api/v1/jobs/${job.id}`, {
+    headers,
+    data: {
+      status: "succeeded",
+      output: { assetUrl: "/exports/api-campaign.mp4" },
+    },
+  });
+  expect(updateResponse.status()).toBe(200);
+  const updated = await updateResponse.json();
+  expect(updated.status).toBe("succeeded");
+
+  const readProject = await request.get(`/api/v1/projects/${project.id}`, { headers });
+  expect(readProject.status()).toBe(200);
+
+  const eventsResponse = await request.get("/api/v1/webhooks/events", { headers });
+  expect(eventsResponse.status()).toBe(200);
+  const events = (await eventsResponse.json()).events as Array<{
+    eventType: string;
+    payload: Record<string, unknown>;
+  }>;
+  expect(events.some((event) => event.eventType === "project.created")).toBeTruthy();
+  expect(events.some((event) => event.eventType === "job.created")).toBeTruthy();
+  expect(
+    events.some(
+      (event) =>
+        event.eventType === "job.status_changed" &&
+        event.payload.jobId === job.id
+    )
+  ).toBeTruthy();
+});
+
+test("P7 external API authenticates projects jobs and records webhook state changes", async ({ page }) => {
+  const unauthorized = await page.request.get("/api/v1/projects");
+  expect(unauthorized.status()).toBe(401);
+
+  const headers = { "x-nemdar-api-key": "test-api-key" };
+
+  const webhookResponse = await page.request.post("/api/v1/webhooks", {
+    headers,
+    data: {
+      url: "http://127.0.0.1:9999/hook",
+      eventTypes: ["job.status_changed"],
+    },
+  });
+  expect(webhookResponse.status()).toBe(201);
+
+  const projectResponse = await page.request.post("/api/v1/projects", {
+    headers,
+    data: {
+      name: "API Campaign Project",
+      metadata: { source: "e2e" },
+    },
+  });
+  expect(projectResponse.status()).toBe(201);
+  const project = await projectResponse.json();
+
+  const projectLookup = await page.request.get(`/api/v1/projects/${project.id}`, {
+    headers,
+  });
+  expect(projectLookup.status()).toBe(200);
+
+  const jobResponse = await page.request.post("/api/v1/jobs", {
+    headers,
+    data: {
+      projectId: project.id,
+      type: "batch",
+      payload: { rowCount: 5 },
+    },
+  });
+  expect(jobResponse.status()).toBe(201);
+  const job = await jobResponse.json();
+
+  await page.request.patch(`/api/v1/jobs/${job.id}`, {
+    headers,
+    data: { status: "running" },
+  });
+  const succeededResponse = await page.request.patch(`/api/v1/jobs/${job.id}`, {
+    headers,
+    data: {
+      status: "succeeded",
+      output: { variants: 5 },
+    },
+  });
+  expect(succeededResponse.status()).toBe(200);
+
+  const eventsResponse = await page.request.get("/api/v1/webhooks/events", {
+    headers,
+  });
+  expect(eventsResponse.status()).toBe(200);
+  const eventsPayload = await eventsResponse.json();
+  const statusEvents = eventsPayload.events.filter(
+    (event: { eventType: string }) => event.eventType === "job.status_changed"
+  );
+  expect(statusEvents.length).toBeGreaterThanOrEqual(2);
+  expect(statusEvents[0].deliveryStatus).toBe("pending");
+});
