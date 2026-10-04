@@ -10,15 +10,16 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
+    "jszip": "^3.10.2",
     "next": "16.3.8",
     "react": "19.3.0",
     "react-dom": "19.3.0"
   },
   "devDependencies": {
+    "@playwright/test": "1.63.0",
     "@types/node": "26.6.4",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
-    "typescript": "7.0.2",
-    "@playwright/test": "1.63.0"
+    "typescript": "7.0.2"
   }
 }

@@ -1,4 +1,5 @@
-import { stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
+import JSZip from "jszip";
 import { expect, test } from "@playwright/test";
 
 const PNG_1X1 = Buffer.from(
@@ -1489,4 +1490,79 @@ test("P5 language variants preserve master linkage and experiments stay bounded 
 
   await expect(page.getByTestId("language-variant")).toHaveCount(2);
   await expect(page.getByTestId("campaign-experiment")).toHaveCount(3);
+});
+
+test("P5 Brand Guardian blocks unsafe claims and clears after correction", async ({ page }) => {
+  await page.goto("/");
+
+  await page.getByLabel("Brief product").fill("NEMDAR Creator");
+  await page.getByLabel("Brief audience").fill("UAE marketing teams");
+  await page.getByLabel("Brief objective").fill("Generate qualified leads");
+  await page.getByLabel("Brief CTA").fill("Request a demo");
+  await page.getByLabel("Brief approved claims").fill("AI-assisted creative workflow");
+  await page.getByLabel("Brief prohibited claims").fill("Guaranteed ROI");
+
+  await page.getByRole("button", { name: "Generate concepts" }).click();
+  await page.getByRole("button", { name: "Build initial edit" }).first().click();
+
+  await expect(page.getByTestId("guardian-status")).toContainText("Pass");
+
+  await page.getByLabel("AI edit command").fill("add text: Guaranteed ROI");
+  await page.getByRole("button", { name: "Preview command" }).click();
+  await page.getByRole("button", { name: "Apply actions" }).click();
+
+  await expect(page.getByTestId("guardian-status")).toContainText("Blocked");
+  await expect(page.getByTestId("brand-guardian")).toContainText("Unsafe or prohibited claim");
+  await expect(page.getByTestId("brand-guardian")).toContainText("Guaranteed ROI");
+
+  await page.getByRole("button", { name: "Undo" }).click();
+  await expect(page.getByTestId("guardian-status")).toContainText("Pass");});
+
+test("P5 Campaign Pack exports a real ZIP with manifest copy project and assets", async ({ page }) => {
+  await page.goto("/");
+
+  await page.getByLabel("Brief product").fill("NEMDAR Creator");
+  await page.getByLabel("Brief audience").fill("UAE marketing teams");
+  await page.getByLabel("Brief objective").fill("Generate qualified leads");
+  await page.getByLabel("Brief CTA").fill("Request a demo");
+  await page.getByLabel("Brief approved claims").fill("AI-assisted creative workflow");
+  await page.getByRole("button", { name: "EN", exact: true }).click();
+
+  await page.getByRole("button", { name: "Generate concepts" }).click();
+  await page.getByRole("button", { name: "Build initial edit" }).first().click();
+  await page.getByRole("button", { name: "Generate platform variants" }).click();
+  await page.getByRole("button", { name: "Generate AR / EN variants" }).click();
+  await page.getByRole("button", { name: "Generate 3 experiments" }).click();
+
+  await expect(page.getByTestId("guardian-status")).toContainText("Pass");
+  await expect(page.getByTestId("export-campaign-pack")).toBeEnabled();
+
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByTestId("export-campaign-pack").click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toMatch(/campaign-pack\.zip$/);
+
+  const downloadPath = await download.path();
+  expect(downloadPath).toBeTruthy();
+  const buffer = await readFile(downloadPath!);
+  const zip = await JSZip.loadAsync(buffer);
+  const names = Object.keys(zip.files);
+
+  expect(names).toContain("manifest.json");
+  expect(names).toContain("copy/marketing-brief.json");
+  expect(names).toContain("copy/concepts.json");
+  expect(names).toContain("copy/language-variants.json");
+  expect(names).toContain("copy/experiments.json");
+  expect(names).toContain("variants/platform-variants.json");
+  expect(names).toContain("project/storyboard.json");
+  expect(names).toContain("project/captions.json");
+  expect(names).toContain("ai/generation-ledger.json");
+  expect(names.some((name) => name.startsWith("assets/") && !name.endsWith("/"))).toBeTruthy();
+
+  const manifest = JSON.parse(await zip.file("manifest.json")!.async("string"));
+  expect(manifest.studio).toBe("NEMDAR Creator");
+  expect(manifest.preflight.status).toBe("pass");
+  expect(manifest.campaignVariants).toHaveLength(4);
+  expect(manifest.languageVariants).toHaveLength(2);
+  expect(manifest.campaignExperiments).toHaveLength(3);
 });

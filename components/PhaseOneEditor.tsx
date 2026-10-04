@@ -14,6 +14,7 @@ import type { BrollOption, StoryboardAssetNeed, StoryboardPlan, StoryboardScene 
 import { buildCreativeConcepts, type CreativeConcept } from "../lib/marketing/brief";
 import { buildCampaignVariants, type CampaignVariant } from "../lib/marketing/variants";
 import { buildBoundedExperiments, buildLanguageVariants, type CampaignExperiment, type CampaignLanguageVariant } from "../lib/marketing/experiments";
+import { runBrandGuardian } from "../lib/marketing/guardian";
 import { EMPTY_MARKETING_BRIEF, normalizeMarketingBrief, validateMarketingBrief, type MarketingBrief, type MarketingLanguage, type MarketingPlatform } from "../lib/editor/marketing";
 import type { ServerRenderManifest } from "../lib/render/server-types";
 
@@ -414,6 +415,8 @@ export default function PhaseOneEditor() {
   const [campaignVariants, setCampaignVariants] = useState<CampaignVariant[]>([]);
   const [languageVariants, setLanguageVariants] = useState<CampaignLanguageVariant[]>([]);
   const [campaignExperiments, setCampaignExperiments] = useState<CampaignExperiment[]>([]);
+  const [campaignPackState, setCampaignPackState] = useState<"idle" | "exporting" | "error">("idle");
+  const [campaignPackError, setCampaignPackError] = useState<string | null>(null);
   const [captionLanguage, setCaptionLanguage] = useState<CaptionLanguage>("auto");
   const [captionState, setCaptionState] = useState<"idle" | "generating" | "ready" | "error">("idle");
   const [captionError, setCaptionError] = useState<string | null>(null);
@@ -601,6 +604,17 @@ export default function PhaseOneEditor() {
   const marketingBriefValidation = useMemo(
     () => validateMarketingBrief(marketingBrief),
     [marketingBrief]
+  );
+
+  const brandGuardian = useMemo(
+    () =>
+      runBrandGuardian({
+        project,
+        brandKit,
+        brief: marketingBrief,
+        captions,
+      }),
+    [project, brandKit, marketingBrief, captions]
   );
 
   const selected = useMemo(
@@ -1571,6 +1585,81 @@ export default function PhaseOneEditor() {
     if (firstScene) {
       setImagePrompt(firstScene.visualPrompt);
       await generateImageAsset(firstScene.visualPrompt);
+    }
+  }
+
+  async function exportCampaignPack() {
+    if (brandGuardian.status === "blocked") {
+      setCampaignPackState("error");
+      setCampaignPackError("Brand Guardian must pass before campaign export.");
+      return;
+    }
+
+    try {
+      setCampaignPackState("exporting");
+      setCampaignPackError(null);
+      const form = new FormData();
+      const assets = mediaItems.map(({ url: _url, blob: _blob, ...item }) => item);
+      const audio = audioTrack
+        ? (({ url: _url, blob: _blob, ...track }) => track)(audioTrack)
+        : null;
+
+      form.set(
+        "manifest",
+        JSON.stringify({
+          studio: "NEMDAR Creator",
+          schemaVersion: 1,
+          exportedAt: new Date().toISOString(),
+          project,
+          marketingBrief,
+          brandKit,
+          storyboard,
+          captions,
+          creativeConcepts,
+          selectedConceptId,
+          campaignVariants,
+          languageVariants,
+          campaignExperiments,
+          generationLedger,
+          assets,
+          audioTrack: audio,
+          preflight: brandGuardian,
+        })
+      );
+
+      for (const item of mediaItems) {
+        form.append(`asset:${item.id}`, item.blob, item.name);
+      }
+      if (audioTrack) {
+        form.append(`asset:${audioTrack.id}`, audioTrack.blob, audioTrack.name);
+      }
+
+      const response = await fetch("/api/export/campaign-pack", {
+        method: "POST",
+        body: form,
+      });
+      if (!response.ok) {
+        const payload = (await response.json()) as { error?: string };
+        throw new Error(payload.error || "Campaign Pack export failed.");
+      }
+
+      const blob = await response.blob();
+      const disposition = response.headers.get("content-disposition") ?? "";
+      const filename =
+        disposition.match(/filename="([^"]+)"/)?.[1] ??
+        `${project.name || "campaign"}-campaign-pack.zip`;
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setCampaignPackState("idle");
+    } catch (error) {
+      setCampaignPackState("error");
+      setCampaignPackError(
+        error instanceof Error ? error.message : "Unable to export Campaign Pack."
+      );
     }
   }
 
@@ -3926,6 +4015,47 @@ export default function PhaseOneEditor() {
             ))}
           </div>
         )}
+
+        <div className={`brandGuardian ${brandGuardian.status}`} data-testid="brand-guardian">
+          <div className="brandGuardianHeader">
+            <div>
+              <strong>Brand Guardian</strong>
+              <small>Preflight before campaign export</small>
+            </div>
+            <span data-testid="guardian-status">
+              {brandGuardian.status === "pass"
+                ? `Pass · ${brandGuardian.warnings} warnings`
+                : `Blocked · ${brandGuardian.errors} errors`}
+            </span>
+          </div>
+          {brandGuardian.issues.length === 0 ? (
+            <p className="hint">Brand, CTA and claims checks passed.</p>
+          ) : (
+            <div className="guardianIssues">
+              {brandGuardian.issues.map((issue) => (
+                <div key={issue.id} className={`guardianIssue ${issue.severity}`} data-testid="guardian-issue">
+                  <b>{issue.code}</b>
+                  <span>{issue.message}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {brandGuardian.warnings > 0 && (
+            <button type="button" className="toolButton" onClick={applyBrandKitToProject}>
+              Apply Brand Kit fixes
+            </button>
+          )}
+          <button
+            type="button"
+            className="primary"
+            data-testid="export-campaign-pack"
+            disabled={brandGuardian.status === "blocked" || campaignPackState === "exporting"}
+            onClick={() => void exportCampaignPack()}
+          >
+            {campaignPackState === "exporting" ? "Building Campaign Pack…" : "Export Campaign Pack ZIP"}
+          </button>
+          {campaignPackError && <p className="providerError">{campaignPackError}</p>}
+        </div>
       </section>
 
       <section className="workspace">
