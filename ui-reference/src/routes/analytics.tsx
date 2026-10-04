@@ -1,0 +1,3 @@
+import { createFileRoute } from '@tanstack/react-router';
+import { AnalyticsPage } from '@/features/nemdar/screens';
+export const Route = createFileRoute('/analytics')({ head: () => ({ meta: [{ title: 'Analytics · NEMDAR Creative Studio' }, { name: 'description', content: 'Compare sample campaign performance and production spend.' }, { property: 'og:title', content: 'Analytics · NEMDAR Creative Studio' }, { property: 'og:description', content: 'Compare sample campaign performance and production spend.' }, { property: 'og:type', content: 'website' }, { name: 'twitter:card', content: 'summary_large_image' }] }), component: AnalyticsPage });

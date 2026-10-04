@@ -1,0 +1,3 @@
+import { createFileRoute } from '@tanstack/react-router';
+import { PublishingPage } from '@/features/nemdar/screens';
+export const Route = createFileRoute('/publishing')({ head: () => ({ meta: [{ title: 'Publishing · NEMDAR Creative Studio' }, { name: 'description', content: 'Prepare approved creative for connected channels.' }, { property: 'og:title', content: 'Publishing · NEMDAR Creative Studio' }, { property: 'og:description', content: 'Prepare approved creative for connected channels.' }, { property: 'og:type', content: 'website' }, { name: 'twitter:card', content: 'summary_large_image' }] }), component: PublishingPage });

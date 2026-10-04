@@ -1,0 +1,3 @@
+import { createFileRoute } from '@tanstack/react-router';
+import { BrandPage } from '@/features/nemdar/screens';
+export const Route = createFileRoute('/brand-kit')({ head: () => ({ meta: [{ title: 'Brand Kit · NEMDAR Creative Studio' }, { name: 'description', content: 'Manage brand colors, typography and approved creative guidelines.' }, { property: 'og:title', content: 'Brand Kit · NEMDAR Creative Studio' }, { property: 'og:description', content: 'Manage brand colors, typography and approved creative guidelines.' }, { property: 'og:type', content: 'website' }, { name: 'twitter:card', content: 'summary_large_image' }] }), component: BrandPage });

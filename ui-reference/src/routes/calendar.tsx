@@ -1,0 +1,3 @@
+import { createFileRoute } from '@tanstack/react-router';
+import { CalendarPage } from '@/features/nemdar/screens';
+export const Route = createFileRoute('/calendar')({ head: () => ({ meta: [{ title: 'Calendar · NEMDAR Creative Studio' }, { name: 'description', content: 'View scheduled content and campaign handoffs.' }, { property: 'og:title', content: 'Calendar · NEMDAR Creative Studio' }, { property: 'og:description', content: 'View scheduled content and campaign handoffs.' }, { property: 'og:type', content: 'website' }, { name: 'twitter:card', content: 'summary_large_image' }] }), component: CalendarPage });

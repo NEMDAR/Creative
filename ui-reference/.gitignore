@@ -1,0 +1,8 @@
+node_modules/
+.output/
+.wrangler/
+dist/
+coverage/
+.env*
+*.local
+.DS_Store

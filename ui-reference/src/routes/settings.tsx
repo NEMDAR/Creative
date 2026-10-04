@@ -1,0 +1,3 @@
+import { createFileRoute } from '@tanstack/react-router';
+import { SettingsPage } from '@/features/nemdar/screens';
+export const Route = createFileRoute('/settings')({ head: () => ({ meta: [{ title: 'Settings · NEMDAR Creative Studio' }, { name: 'description', content: 'Manage workspace preferences and permissions.' }, { property: 'og:title', content: 'Settings · NEMDAR Creative Studio' }, { property: 'og:description', content: 'Manage workspace preferences and permissions.' }, { property: 'og:type', content: 'website' }, { name: 'twitter:card', content: 'summary_large_image' }] }), component: SettingsPage });

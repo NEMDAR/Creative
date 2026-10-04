@@ -1,0 +1,3 @@
+import { createFileRoute } from '@tanstack/react-router';
+import { HomePage } from '@/features/nemdar/screens';
+export const Route = createFileRoute('/')({ head: () => ({ meta: [{ title: 'Home · NEMDAR Creative Studio' }, { name: 'description', content: 'Campaign production overview and recent projects in NEMDAR Creative Studio.' }, { property: 'og:title', content: 'Home · NEMDAR Creative Studio' }, { property: 'og:description', content: 'Campaign production overview and recent projects in NEMDAR Creative Studio.' }, { property: 'og:type', content: 'website' }, { name: 'twitter:card', content: 'summary_large_image' }] }), component: HomePage });

@@ -1,0 +1,3 @@
+import { createFileRoute } from '@tanstack/react-router';
+import { EditorPage } from '@/features/nemdar/editor';
+export const Route = createFileRoute('/editor')({ head: () => ({ meta: [{ title: 'Editor · NEMDAR Creative Studio' }, { name: 'description', content: 'Edit campaign creative with a canvas, timeline and contextual tools.' }, { property: 'og:title', content: 'Editor · NEMDAR Creative Studio' }, { property: 'og:description', content: 'Edit campaign creative with a canvas, timeline and contextual tools.' }, { property: 'og:type', content: 'website' }, { name: 'twitter:card', content: 'summary_large_image' }] }), component: EditorPage });
