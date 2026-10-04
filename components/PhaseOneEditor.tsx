@@ -12,6 +12,7 @@ import type { ProviderCapability, ProviderDirectorySnapshot, ProviderArtifact } 
 import { withDefaultProvenance, type AssetGenerationMetadata, type AssetReviewStatus, type GenerationRecord } from "../lib/editor/assets";
 import type { BrollOption, StoryboardAssetNeed, StoryboardPlan, StoryboardScene } from "../lib/editor/storyboard";
 import { buildCreativeConcepts, type CreativeConcept } from "../lib/marketing/brief";
+import { buildCampaignVariants, type CampaignVariant } from "../lib/marketing/variants";
 import { EMPTY_MARKETING_BRIEF, normalizeMarketingBrief, validateMarketingBrief, type MarketingBrief, type MarketingLanguage, type MarketingPlatform } from "../lib/editor/marketing";
 import type { ServerRenderManifest } from "../lib/render/server-types";
 
@@ -409,6 +410,7 @@ export default function PhaseOneEditor() {
   const [marketingBrief, setMarketingBrief] = useState<MarketingBrief>(() => normalizeMarketingBrief(EMPTY_MARKETING_BRIEF));
   const [creativeConcepts, setCreativeConcepts] = useState<CreativeConcept[]>([]);
   const [selectedConceptId, setSelectedConceptId] = useState<string | null>(null);
+  const [campaignVariants, setCampaignVariants] = useState<CampaignVariant[]>([]);
   const [captionLanguage, setCaptionLanguage] = useState<CaptionLanguage>("auto");
   const [captionState, setCaptionState] = useState<"idle" | "generating" | "ready" | "error">("idle");
   const [captionError, setCaptionError] = useState<string | null>(null);
@@ -989,6 +991,7 @@ export default function PhaseOneEditor() {
     setStoryboardBrief("");
     setGenerationLedger([]);
     setMarketingBrief(normalizeMarketingBrief(EMPTY_MARKETING_BRIEF));
+    setCampaignVariants([]);
     setCaptionLanguage("auto");
     setCaptionState("idle");
     setSelectedCaptionId(null);
@@ -1019,6 +1022,7 @@ export default function PhaseOneEditor() {
           storyboard: null,
           generationLedger: [],
           marketingBrief: normalizeMarketingBrief(EMPTY_MARKETING_BRIEF),
+          campaignVariants: [],
           timelineZoom: 1,
           snapEnabled: true,
           selectedClipId: null,
@@ -1561,6 +1565,20 @@ export default function PhaseOneEditor() {
       setImagePrompt(firstScene.visualPrompt);
       await generateImageAsset(firstScene.visualPrompt);
     }
+  }
+
+  function generatePlatformVariants() {
+    const concept =
+      creativeConcepts.find((item) => item.id === selectedConceptId) ??
+      creativeConcepts[0] ??
+      null;
+    const variants = buildCampaignVariants(project, concept);
+    setCampaignVariants(variants);
+  }
+
+  function loadCampaignVariant(variant: CampaignVariant) {
+    setProject(structuredClone(variant.project));
+    setSelectedId(variant.project.overlays.find((overlay) => overlay.kind === "text")?.id ?? null);
   }
 
   function sendConceptToStoryboard(concept: CreativeConcept) {
@@ -2712,6 +2730,7 @@ export default function PhaseOneEditor() {
       storyboard,
       generationLedger,
       marketingBrief,
+      campaignVariants,
       timelineZoom,
       snapEnabled,
       selectedClipId,
@@ -2755,6 +2774,7 @@ export default function PhaseOneEditor() {
     setStoryboardBrief(state.storyboard?.brief ?? "");
     setGenerationLedger(state.generationLedger ?? []);
     setMarketingBrief(normalizeMarketingBrief(state.marketingBrief));
+    setCampaignVariants(state.campaignVariants ?? []);
     setCaptionLanguage(state.captions?.requestedLanguage ?? "auto");
     setCaptionState(state.captions?.cues.length ? "ready" : "idle");
     setSelectedCaptionId(state.captions?.cues[0]?.id ?? null);
@@ -2871,6 +2891,7 @@ export default function PhaseOneEditor() {
       storyboard: state.storyboard ?? null,
       generationLedger: state.generationLedger ?? [],
       marketingBrief: normalizeMarketingBrief(state.marketingBrief),
+      campaignVariants: state.campaignVariants ?? [],
       timelineZoom: state.timelineZoom,
       snapEnabled: state.snapEnabled,
       selectedClipId: state.selectedClipId,
@@ -3730,6 +3751,36 @@ export default function PhaseOneEditor() {
                   <button type="button" className="toolButton" onClick={()=>sendConceptToStoryboard(concept)}>Use concept → scene plan</button>
                   <button type="button" className="primary" onClick={()=>void orchestrateConceptToEdit(concept)}>Build initial edit</button>
                 </div>
+              </article>
+            ))}
+          </div>
+        )}
+        <div className="variantToolbar">
+          <button
+            type="button"
+            className="toolButton"
+            disabled={project.overlays.length === 0}
+            onClick={generatePlatformVariants}
+          >
+            Generate platform variants
+          </button>
+          {campaignVariants.length > 0 && (
+            <span data-testid="variant-count">{campaignVariants.length} editable variants</span>
+          )}
+        </div>
+        {campaignVariants.length > 0 && (
+          <div className="variantGrid" data-testid="variant-grid">
+            {campaignVariants.map((variant) => (
+              <article key={variant.id} className="variantCard" data-testid="campaign-variant">
+                <div>
+                  <strong>{variant.name}</strong>
+                  <span>{variant.ratio}</span>
+                </div>
+                <small>{variant.platform}</small>
+                <small>{variant.hook}</small>
+                <button type="button" className="toolButton" onClick={() => loadCampaignVariant(variant)}>
+                  Edit variant
+                </button>
               </article>
             ))}
           </div>

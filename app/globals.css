@@ -308,3 +308,12 @@ h2 { font-size:12px; text-transform:uppercase; letter-spacing:.1em; color:var(--
 .briefChip input { width:auto !important; }
 .briefWarnings { display:flex; flex-direction:column; gap:3px; padding:7px; border:1px solid rgba(245,208,111,.25); border-radius:8px; background:rgba(245,208,111,.045); }
 .briefWarnings small { color:#e7cf91; font-size:9px; }
+
+.variantToolbar { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.variantToolbar span { color:var(--muted); font-size:9px; }
+.variantGrid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:7px; }
+.variantCard { display:flex; flex-direction:column; gap:6px; padding:9px; border:1px solid var(--line); border-radius:10px; background:var(--surface-2); }
+.variantCard > div { display:flex; justify-content:space-between; gap:8px; align-items:center; }
+.variantCard > div strong { font-size:10px; }
+.variantCard > div span,.variantCard small { color:var(--muted); font-size:9px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+@media (max-width:900px){.variantGrid{grid-template-columns:1fr 1fr}}

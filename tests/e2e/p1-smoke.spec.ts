@@ -1422,3 +1422,34 @@ test("P5 brief-to-edit orchestration creates storyboard generated asset ratio an
   await expect(page.getByTestId("overlay-track-item").nth(1)).toContainText("text");
   await expect(page.getByRole("button", { name: "9:16", exact: true }).first()).toHaveClass(/active/);
 });
+
+test("P5 master creative generates four editable platform variants and persists", async ({ page }) => {
+  await page.goto("/");
+
+  await page.getByLabel("Brief product").fill("NEMDAR Creator");
+  await page.getByLabel("Brief audience").fill("UAE marketing teams");
+  await page.getByLabel("Brief objective").fill("Generate qualified leads");
+  await page.getByLabel("Brief CTA").fill("Request a demo");
+  await page.getByLabel("Brief approved claims").fill("AI-assisted creative workflow");
+
+  await page.getByRole("button", { name: "Generate concepts" }).click();
+  await page.getByRole("button", { name: "Build initial edit" }).first().click();
+
+  await expect(page.locator(".stage .overlay")).toHaveCount(2);
+  await page.getByRole("button", { name: "Generate platform variants" }).click();
+
+  await expect(page.getByTestId("campaign-variant")).toHaveCount(4);
+  await expect(page.getByTestId("variant-grid")).toContainText("9:16");
+  await expect(page.getByTestId("variant-grid")).toContainText("1:1");
+  await expect(page.getByTestId("variant-grid")).toContainText("4:5");
+  await expect(page.getByTestId("variant-grid")).toContainText("16:9");
+
+  await page.getByTestId("campaign-variant").filter({ hasText: "Square Feed" }).getByRole("button", { name: "Edit variant" }).click();
+  await expect(page.getByRole("button", { name: "1:1", exact: true })).toHaveClass(/active/);
+
+  await expect(page.getByTestId("save-state")).toHaveText("Saved", { timeout: 5_000 });
+  await page.reload();
+
+  await expect(page.getByTestId("campaign-variant")).toHaveCount(4);
+  await expect(page.getByTestId("variant-count")).toContainText("4 editable variants");
+});
