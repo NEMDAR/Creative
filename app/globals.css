@@ -368,3 +368,19 @@ h2 { font-size:12px; text-transform:uppercase; letter-spacing:.1em; color:var(--
 .audioMixPanel .toggleLabel { display:flex; flex-direction:row; align-items:center; gap:8px; }
 .audioMixPanel .toggleLabel input { width:auto; }
 .audioMixPanel small { color:var(--muted); font-size:9px; line-height:1.4; }
+
+.batchPanel { display:flex; flex-direction:column; gap:8px; padding:10px; border:1px solid rgba(22,139,241,.2); border-radius:11px; background:rgba(22,139,241,.035); }
+.batchHeader { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.batchHeader strong { font-size:11px; }
+.batchHeader span,.batchPanel small { color:var(--muted); font-size:9px; line-height:1.35; }
+.batchPanel textarea { min-height:118px; resize:vertical; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:9px; }
+.batchSummary { display:grid; grid-template-columns:repeat(3,1fr); gap:5px; padding:7px; border:1px solid var(--line); border-radius:8px; font-size:9px; }
+.batchSummary strong { color:#8ad9aa; }
+.batchSummary span { color:var(--muted); }
+.batchResults { display:flex; flex-direction:column; gap:6px; max-height:260px; overflow:auto; }
+.batchVariant { display:flex; flex-direction:column; gap:5px; padding:8px; border:1px solid var(--line); border-radius:8px; background:var(--surface-2); }
+.batchVariant > div { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.batchVariant strong { font-size:10px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.batchVariant span,.batchVariant small { font-size:9px; color:var(--muted); }
+.batchVariant.ready { border-color:rgba(104,211,145,.26); }
+.batchVariant.invalid { border-color:rgba(255,105,120,.3); }

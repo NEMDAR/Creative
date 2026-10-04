@@ -15,6 +15,7 @@ import { buildCreativeConcepts, type CreativeConcept } from "../lib/marketing/br
 import { buildCampaignVariants, type CampaignVariant } from "../lib/marketing/variants";
 import { buildBoundedExperiments, buildLanguageVariants, type CampaignExperiment, type CampaignLanguageVariant } from "../lib/marketing/experiments";
 import { runBrandGuardian } from "../lib/marketing/guardian";
+import { MAX_BATCH_ROWS, parseBatchCsv, type BatchGenerationResult } from "../lib/scale/batch";
 import { EMPTY_MARKETING_BRIEF, normalizeMarketingBrief, validateMarketingBrief, type MarketingBrief, type MarketingLanguage, type MarketingPlatform } from "../lib/editor/marketing";
 import { createOverlayKeyframe, deleteOverlayKeyframe, resolveOverlayAnimation, upsertOverlayKeyframe } from "../lib/editor/keyframes";
 import { applyMotionPreset, MOTION_PRESETS, type MotionPresetId } from "../lib/editor/motion-presets";
@@ -579,6 +580,11 @@ export default function PhaseOneEditor() {
   const [campaignExperiments, setCampaignExperiments] = useState<CampaignExperiment[]>([]);
   const [campaignPackState, setCampaignPackState] = useState<"idle" | "exporting" | "error">("idle");
   const [campaignPackError, setCampaignPackError] = useState<string | null>(null);
+  const [batchCsv, setBatchCsv] = useState("name,headline,body,cta,ratio,language,template\nCampaign A,Main hook,Supporting copy,Learn more,9:16,en,product-spotlight");
+  const [batchTemplate, setBatchTemplate] = useState<MarketingTemplateId>("product-spotlight");
+  const [batchState, setBatchState] = useState<"idle" | "generating" | "ready" | "error">("idle");
+  const [batchError, setBatchError] = useState<string | null>(null);
+  const [batchResult, setBatchResult] = useState<BatchGenerationResult | null>(null);
   const [captionLanguage, setCaptionLanguage] = useState<CaptionLanguage>("auto");
   const [captionState, setCaptionState] = useState<"idle" | "generating" | "ready" | "error">("idle");
   const [captionError, setCaptionError] = useState<string | null>(null);
@@ -2007,6 +2013,74 @@ export default function PhaseOneEditor() {
       creativeConcepts[0] ??
       null
     );
+  }
+
+  async function onBatchCsvUpload(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      setBatchCsv(await file.text());
+      setBatchError(null);
+      setBatchState("idle");
+    } catch {
+      setBatchState("error");
+      setBatchError("Unable to read CSV file.");
+    } finally {
+      event.target.value = "";
+    }
+  }
+
+  async function runBatchGeneration() {
+    const rows = parseBatchCsv(batchCsv);
+    if (!rows.length) {
+      setBatchState("error");
+      setBatchError("CSV needs a header row and at least one data row.");
+      return;
+    }
+
+    try {
+      setBatchState("generating");
+      setBatchError(null);
+      const response = await fetch("/api/batch/generate", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          rows,
+          defaultTemplate: batchTemplate,
+          brandKit,
+        }),
+      });
+      const payload = (await response.json()) as BatchGenerationResult & {
+        error?: string;
+      };
+      if (!response.ok || !Array.isArray(payload.variants)) {
+        throw new Error(payload.error || "Batch generation failed.");
+      }
+      setBatchResult(payload);
+      setBatchState("ready");
+    } catch (error) {
+      setBatchState("error");
+      setBatchError(
+        error instanceof Error ? error.message : "Unable to generate batch."
+      );
+    }
+  }
+
+  function loadBatchVariant(index: number) {
+    const variant = batchResult?.variants[index];
+    if (!variant?.project) return;
+
+    const nextProject = structuredClone(variant.project);
+    setProject(nextProject);
+    setSelectedId(nextProject.overlays[0]?.id ?? null);
+    setMediaItems([]);
+    setMedia(null);
+    setDuration(0);
+    setTimeline(createEmptyTimeline());
+    setAudioTrack(null);
+    setCaptions(null);
+    setStoryboard(null);
+    setStoryboardBrief("");
   }
 
   function generateLanguageCampaignVariants() {
@@ -4656,6 +4730,98 @@ export default function PhaseOneEditor() {
 
       <section className="workspace">
         <aside className="panel leftPanel">
+          <h2>Batch Generation</h2>
+          <div className="batchPanel" data-testid="batch-panel">
+            <div className="batchHeader">
+              <strong>CSV → branded variants</strong>
+              <span>Max {MAX_BATCH_ROWS} rows</span>
+            </div>
+            <label>
+              Default template
+              <select
+                aria-label="Batch default template"
+                value={batchTemplate}
+                onChange={(e) => setBatchTemplate(e.target.value as MarketingTemplateId)}
+              >
+                {MARKETING_TEMPLATES.map((template) => (
+                  <option key={template.id} value={template.id}>
+                    {template.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="toolButton fileButton">
+              Import CSV
+              <input
+                type="file"
+                accept=".csv,text/csv"
+                onChange={onBatchCsvUpload}
+                hidden
+              />
+            </label>
+            <label>
+              CSV rows
+              <textarea
+                aria-label="Batch CSV"
+                value={batchCsv}
+                onChange={(e) => setBatchCsv(e.target.value)}
+              />
+            </label>
+            <small>
+              Columns: name, headline, body, cta, ratio, language, template
+            </small>
+            <button
+              type="button"
+              className="primary"
+              disabled={batchState === "generating"}
+              onClick={() => void runBatchGeneration()}
+            >
+              {batchState === "generating" ? "Generating batch…" : "Generate batch"}
+            </button>
+            {batchError && <p className="providerError">{batchError}</p>}
+            {batchResult && (
+              <>
+                <div className="batchSummary" data-testid="batch-summary">
+                  <strong>{batchResult.acceptedRows} ready</strong>
+                  <span>{batchResult.rejectedRows} invalid</span>
+                  <span>{batchResult.truncatedRows} truncated</span>
+                </div>
+                <div className="batchResults">
+                  {batchResult.variants.map((variant, index) => (
+                    <article
+                      key={variant.id}
+                      className={`batchVariant ${variant.status}`}
+                      data-testid="batch-variant"
+                    >
+                      <div>
+                        <strong>
+                          {variant.project?.name ?? `Row ${variant.rowIndex}`}
+                        </strong>
+                        <span>{variant.status}</span>
+                      </div>
+                      {variant.project ? (
+                        <>
+                          <small>
+                            {variant.project.ratio} · {variant.source.language ?? "en"} · {variant.source.template ?? batchTemplate}
+                          </small>
+                          <button
+                            type="button"
+                            className="toolButton"
+                            onClick={() => loadBatchVariant(index)}
+                          >
+                            Load variant
+                          </button>
+                        </>
+                      ) : (
+                        <small>{variant.errors.join(" · ")}</small>
+                      )}
+                    </article>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+
           <h2>Assets</h2>
           <label className="uploadBox">
             <span>Upload videos or images</span>

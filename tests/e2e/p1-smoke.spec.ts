@@ -2136,3 +2136,48 @@ test("P6 reusable motion components can be captured applied and persisted", asyn
   await restoredTarget.click();
   await expect(page.getByTestId("overlay-keyframe")).toHaveCount(2);
 });
+
+test("P7 batch generation validates CSV rows bounds API output and loads branded variants", async ({ page }) => {
+  await page.goto("/");
+
+  const csv = [
+    "name,headline,body,cta,ratio,language,template",
+    "Launch A,Premium launch,Waterfront living,Learn more,9:16,en,product-spotlight",
+    "Arabic Campaign,مشروع مميز,حياة عصرية,اعرف المزيد,4:5,ar,testimonial",
+    "Broken Row,Bad ratio,Copy,Act,3:2,en,offer-stack",
+  ].join("\n");
+
+  await page.getByLabel("Batch CSV").fill(csv);
+  await page.getByRole("button", { name: "Generate batch" }).click();
+
+  await expect(page.getByTestId("batch-summary")).toContainText("2 ready");
+  await expect(page.getByTestId("batch-summary")).toContainText("1 invalid");
+  await expect(page.getByTestId("batch-summary")).toContainText("0 truncated");
+  await expect(page.getByTestId("batch-variant")).toHaveCount(3);
+  await expect(page.getByTestId("batch-variant").nth(2)).toContainText("Unsupported ratio: 3:2");
+
+  const arabicVariant = page.getByTestId("batch-variant").filter({ hasText: "Arabic Campaign" });
+  await arabicVariant.getByRole("button", { name: "Load variant" }).click();
+  await expect(page.getByRole("textbox", { name: "Name", exact: true })).toHaveValue("Arabic Campaign");
+  await expect(page.getByTestId("overlay-template-headline")).toContainText("مشروع مميز");
+
+  const rows = Array.from({ length: 27 }, (_, index) => ({
+    name: `Batch ${index + 1}`,
+    headline: `Headline ${index + 1}`,
+    cta: "Learn more",
+    ratio: "9:16",
+    language: "en",
+  }));
+
+  const response = await page.request.post("/api/batch/generate", {
+    data: {
+      rows,
+      defaultTemplate: "product-spotlight",
+    },
+  });
+  expect(response.ok()).toBeTruthy();
+  const payload = await response.json();
+  expect(payload.acceptedRows).toBe(25);
+  expect(payload.truncatedRows).toBe(2);
+  expect(payload.variants).toHaveLength(25);
+});
