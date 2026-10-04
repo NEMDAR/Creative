@@ -65,6 +65,9 @@ const initialProject: CreatorProject = {
 
 type MediaItem = { id: string; kind: "video" | "image"; url: string; name: string; type: string; blob: Blob; duration: number; generation?: AssetGenerationMetadata; proxyBlob?: Blob; proxyUrl?: string; proxyType?: string; proxySize?: number; proxySourceSize?: number; proxyGeneratedAt?: number; proxyCacheKey?: string };
 type MediaState = MediaItem | null;
+type WorkspaceView = "editor" | "campaign" | "batch" | "publishing";
+type EditorTool = "media" | "text" | "brand" | "ai" | "captions" | "audio" | "templates";
+type InspectorTab = "properties" | "review" | "advanced";
 type AudioTrackRole = "music" | "voiceover" | "sfx";
 type AudioTrackItem = { id: string; url: string; name: string; type: string; blob: Blob; duration: number; startTime: number; gain: number; fadeIn: number; fadeOut: number; duckingEnabled: boolean; duckingGain: number; role: AudioTrackRole; normalizeEnabled: boolean; normalizeTarget: number; measuredPeak: number | null; generation?: AssetGenerationMetadata };
 type SilenceReviewRange = { id: string; startTime: number; endTime: number; duration: number; selected: boolean };
@@ -535,6 +538,9 @@ async function rasterizeOverlayAsset(
 }
 
 export default function PhaseOneEditor() {
+  const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("editor");
+  const [editorTool, setEditorTool] = useState<EditorTool>("media");
+  const [inspectorTab, setInspectorTab] = useState<InspectorTab>("properties");
   const [project, setProject] = useState<CreatorProject>(initialProject);
   const [media, setMedia] = useState<MediaState>(null);
   const [mediaItems, setMediaItems] = useState<MediaItem[]>([]);
@@ -4592,10 +4598,35 @@ export default function PhaseOneEditor() {
   return (
     <main className="appShell">
       <header className="topbar">
-        <div>
-          <span className="eyebrow">NEMDAR</span>
-          <strong>Creative Studio</strong>
-          <span className="phaseChip">P4 Provider Router</span>
+        <div className="brandCluster">
+          <span className="brandGlyph" aria-hidden="true">N</span>
+          <span className="brandCopy">
+            <span className="eyebrow">NEMDAR</span>
+            <strong>Creative Studio</strong>
+          </span>
+          <span className="phaseChip projectChip">{project.name}</span>
+          <span className={`phaseChip saveTop ${saveState}`}>
+            {saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved" : saveState === "error" ? "Save error" : "Local draft"}
+          </span>
+          <span className={`phaseChip approvalTop ${approval.status}`}>{approval.status}</span>
+          <nav className="viewTabs" data-testid="p8-workspace-tabs" aria-label="Creative workspace">
+            {([
+              ["editor", "Edit"],
+              ["campaign", "Campaign"],
+              ["batch", "Batch"],
+              ["publishing", "Publish"],
+            ] as Array<[WorkspaceView, string]>).map(([view, label]) => (
+              <button
+                type="button"
+                key={view}
+                className={workspaceView === view ? "viewTab active" : "viewTab"}
+                aria-pressed={workspaceView === view}
+                onClick={() => setWorkspaceView(view)}
+              >
+                {label}
+              </button>
+            ))}
+          </nav>
         </div>
         <div className="topActions">
           <button className="ghost" onClick={undo}>Undo</button>
@@ -4620,13 +4651,13 @@ export default function PhaseOneEditor() {
         </div>
       </header>
 
-      <section className="commandBar" data-testid="command-bar">
+      <section className={workspaceView === "editor" ? "commandBar" : "commandBar commandBarHidden"} data-testid="command-bar">
         <div className="commandBarInput">
-          <span className="commandSpark">AI</span>
+          <span className="commandSpark" aria-hidden="true">✦</span>
           <input
             aria-label="AI edit command"
             value={commandInput}
-            placeholder="Try: set ratio to 4:5; add text: Limited offer"
+            placeholder="Ask The Wand to reframe, add text, mute, or prepare an edit…"
             onChange={(e) => {
               setCommandInput(e.target.value);
               setCommandPlan(null);
@@ -4636,8 +4667,8 @@ export default function PhaseOneEditor() {
               if (e.key === "Enter") previewEditorCommand();
             }}
           />
-          <button type="button" className="ghost" onClick={previewEditorCommand}>
-            Preview command
+          <button type="button" className="ghost" aria-label="Preview command" onClick={previewEditorCommand}>
+            Plan edit
           </button>
         </div>
         <div className="commandExamples">
@@ -4671,6 +4702,7 @@ export default function PhaseOneEditor() {
         )}
       </section>
 
+      {workspaceView === "campaign" && (
       <section className="marketingStudio" data-testid="marketing-brief">
         <div className="marketingStudioHeader">
           <div>
@@ -4844,9 +4876,37 @@ export default function PhaseOneEditor() {
           {campaignPackError && <p className="providerError">{campaignPackError}</p>}
         </div>
       </section>
+      )}
 
-      <section className="workspace">
-        <aside className="panel leftPanel">
+      <section className={workspaceView === "campaign" ? "workspace workspaceHidden" : "workspace"}>
+        <aside className={workspaceView === "editor" ? "panel leftPanel editorMode" : "panel leftPanel"}>
+          {workspaceView === "editor" && (
+            <nav className="editorToolRail" aria-label="Editor tools" data-testid="editor-tool-rail">
+              {([
+                ["media", "Media", "M"],
+                ["text", "Text", "T"],
+                ["brand", "Brand", "B"],
+                ["ai", "AI", "AI"],
+                ["captions", "Captions", "CC"],
+                ["audio", "Audio", "A"],
+                ["templates", "Templates", "TP"],
+              ] as Array<[EditorTool, string, string]>).map(([tool, label, short]) => (
+                <button
+                  type="button"
+                  key={tool}
+                  aria-label={`${label} tools`}
+                  aria-pressed={editorTool === tool}
+                  className={editorTool === tool ? "editorToolButton active" : "editorToolButton"}
+                  onClick={() => { setEditorTool(tool); setInspectorTab("properties"); }}
+                >
+                  <span>{short}</span>
+                  <small>{label}</small>
+                </button>
+              ))}
+            </nav>
+          )}
+          <div className="toolPanelContent">
+          {workspaceView === "batch" && (<>
           <h2>Batch Generation</h2>
           <div className="batchPanel" data-testid="batch-panel">
             <div className="batchHeader">
@@ -4938,7 +4998,9 @@ export default function PhaseOneEditor() {
               </>
             )}
           </div>
+          </>)}
 
+          {workspaceView === "publishing" && (<>
           <h2>Publishing & Calendar</h2>
           <div className="publishingPanel" data-testid="publishing-panel">
             <div className="publishingHeader">
@@ -5035,8 +5097,10 @@ export default function PhaseOneEditor() {
               </div>
             )}
           </div>
+          </>)}
 
-          <h2>Assets</h2>
+          {(workspaceView !== "editor" || editorTool === "media") && (<>
+          <h2>{workspaceView === "editor" ? "Media" : "Assets"}</h2>
           <label className="uploadBox">
             <span>Upload videos or images</span>
             <small>Add one or multiple clips to Visual 1</small>
@@ -5088,12 +5152,30 @@ export default function PhaseOneEditor() {
               </div>
             ))}
           </div>
-
-          <h2>Elements</h2>
-          <button className="toolButton" onClick={addText}>+ Text</button>
           <label className="toolButton fileButton">+ Logo / image<input type="file" accept="image/*" onChange={addLogo} hidden /></label>
-          <label className="toolButton fileButton">+ Music / audio<input type="file" accept="audio/*" onChange={onAudioUpload} hidden /></label>
+          </>)}
 
+          {workspaceView === "editor" && editorTool === "text" && (<>
+            <h2>Text</h2>
+            <button className="toolButton" onClick={addText}>+ Add text layer</button>
+            <p className="hint">Select a text layer on the canvas to edit typography, timing and motion.</p>
+          </>)}
+
+          {workspaceView === "editor" && editorTool === "audio" && (<>
+            <h2>Audio</h2>
+            <label className="toolButton fileButton">+ Music / audio<input type="file" accept="audio/*" onChange={onAudioUpload} hidden /></label>
+            <p className="hint">{audioTrack ? `Selected: ${audioTrack.name}` : "Add music, voiceover or SFX. Mixing controls appear in the inspector."}</p>
+          </>)}
+
+          {workspaceView === "editor" && editorTool === "captions" && (<>
+            <h2>Captions</h2>
+            <button className="toolButton" type="button" onClick={() => void generateCaptions()} disabled={captionState === "generating"}>
+              {captionState === "generating" ? "Generating captions…" : captions ? "Regenerate captions" : "Generate captions"}
+            </button>
+            <p className="hint">{captions ? `${captions.cues.length} timed cues · ${captions.detectedLanguage}` : "Automatic Arabic / English captions and transcript editing."}</p>
+          </>)}
+
+          {workspaceView === "editor" && editorTool === "ai" && (<>
           <h2>AI Providers</h2>
           <div className="providerPanel" data-testid="provider-panel">
             <div className="providerPanelHeader">
@@ -5545,7 +5627,9 @@ export default function PhaseOneEditor() {
               </>
             )}
           </div>
+          </>)}
 
+          {workspaceView === "editor" && editorTool === "brand" && (<>
           <h2>Brand Kit</h2>
           <div className="brandKitPanel" data-testid="brand-kit">
             <div className="brandKitHeader">
@@ -5705,7 +5789,9 @@ export default function PhaseOneEditor() {
               Apply Brand
             </button>
           </div>
+          </>)}
 
+          {workspaceView === "editor" && editorTool === "templates" && (<>
           <h2>Templates</h2>
           <div className="templateGrid" data-testid="marketing-templates">
             {MARKETING_TEMPLATES.map((template) => (
@@ -5722,7 +5808,9 @@ export default function PhaseOneEditor() {
               </button>
             ))}
           </div>
+          </>)}
 
+          {workspaceView === "editor" && editorTool === "media" && (<>
           <h2>Format</h2>
           <div className="ratioGrid">
             {(Object.keys(RATIOS) as RatioKey[]).map((key) => (
@@ -5734,6 +5822,8 @@ export default function PhaseOneEditor() {
                 {key}
               </button>
             ))}
+          </div>
+          </>)}
           </div>
         </aside>
 
@@ -6139,6 +6229,26 @@ export default function PhaseOneEditor() {
         </section>
 
         <aside className="panel inspector">
+          <div className="inspectorTabs" role="tablist" aria-label="Inspector">
+            {([
+              ["properties", "Properties"],
+              ["review", "Review"],
+              ["advanced", "Advanced"],
+            ] as Array<[InspectorTab, string]>).map(([tab, label]) => (
+              <button
+                type="button"
+                key={tab}
+                role="tab"
+                aria-selected={inspectorTab === tab}
+                className={inspectorTab === tab ? "inspectorTab active" : "inspectorTab"}
+                onClick={() => setInspectorTab(tab)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {inspectorTab === "review" && (<>
           <h2>Project</h2>
           <label>Name<input value={project.name} onChange={(e) => replaceProject((p) => ({ ...p, name: e.target.value }))} /></label>
           <div className="savePanel">
@@ -6333,7 +6443,9 @@ export default function PhaseOneEditor() {
                 </div>
               ))}
           </div>
+          </>)}
 
+          {inspectorTab === "advanced" && (<>
           <h2>Motion</h2>
           {!selected && <p className="hint">Select a text or logo overlay to animate it.</p>}
           {selected && (
@@ -6649,7 +6761,9 @@ export default function PhaseOneEditor() {
               <label className="check"><input type="checkbox" checked={project.muted} onChange={(e) => replaceProject((p) => ({ ...p, muted: e.target.checked }))} /> Muted</label>
             </>
           )}
+          </>)}
 
+          {inspectorTab === "properties" && editorTool === "captions" && (<>
           <h2>Captions</h2>
           <div className="captionInspector" data-testid="caption-inspector">
             <div className="captionGenerateRow">
@@ -6881,7 +6995,9 @@ export default function PhaseOneEditor() {
               </div>
             )}
           </div>
+          </>)}
 
+          {inspectorTab === "advanced" && (<>
           <h2>Scene detection</h2>
           <div className="sceneInspector" data-testid="scene-inspector">
             <label>
@@ -7031,7 +7147,9 @@ export default function PhaseOneEditor() {
               </p>
             )}
           </div>
+          </>)}
 
+          {inspectorTab === "properties" && editorTool === "audio" && (<>
           <h2>Audio track</h2>
           {!audioTrack && <p className="hint">Add music or audio from the Elements panel.</p>}
           {audioTrack && (
@@ -7223,7 +7341,9 @@ export default function PhaseOneEditor() {
               <button type="button" className="danger" onClick={() => setAudioTrack(null)}>Remove audio</button>
             </div>
           )}
+          </>)}
 
+          {inspectorTab === "properties" && editorTool === "media" && (<>
           <h2>Selected clip</h2>
           {!selectedClip && <p className="hint">Select a clip on Visual 1.</p>}
           {selectedClip && (
@@ -7590,7 +7710,9 @@ export default function PhaseOneEditor() {
               <button type="button" className="danger" onClick={deleteSelectedClip}>Delete clip</button>
             </div>
           )}
+          </>)}
 
+          {inspectorTab === "properties" && (editorTool === "text" || editorTool === "brand" || (editorTool === "media" && selected?.kind === "image")) && (<>
           <h2>Selected element</h2>
           {!selected && <p className="hint">Select a text or logo on the stage or overlay track.</p>}
           {selected && timeline.duration > 0 && (
@@ -7651,9 +7773,23 @@ export default function PhaseOneEditor() {
           {selected && <button className="danger" onClick={deleteSelected}>Delete selected</button>}
 
           <div className="notice">
-            <b>P2 timed overlays</b>
-            <span>Text and logo overlays now have independent start/end timing on the timeline, and preview/export respect their active range.</span>
+            <b>Timed overlays</b>
+            <span>Text and logo timing stays editable on the timeline and is respected by preview/export.</span>
           </div>
+          </>)}
+
+          {inspectorTab === "properties" && editorTool === "ai" && (
+            <div className="inspectorEmpty">
+              <strong>AI tools</strong>
+              <span>Use the AI panel on the left. Generated assets remain editable on the canvas and timeline.</span>
+            </div>
+          )}
+          {inspectorTab === "properties" && editorTool === "templates" && (
+            <div className="inspectorEmpty">
+              <strong>Template properties</strong>
+              <span>Start a template from the left, then select its text, media or logo layers to edit them here.</span>
+            </div>
+          )}
         </aside>
       </section>
     </main>
