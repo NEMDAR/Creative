@@ -1575,6 +1575,8 @@ test("P6 overlay keyframes interpolate transform opacity easing and persist", as
     mimeType: "image/png",
     buffer: PNG_1X1,
   });
+  await expect(page.getByTestId("timeline-clip")).toHaveCount(1);
+  await expect(page.getByTestId("timeline-clock")).toContainText("00:00.0");
   await page.getByRole("button", { name: "+ Text", exact: true }).click();
   await expect(page.getByTestId("motion-inspector")).toBeVisible();
 
@@ -1705,4 +1707,46 @@ test("P6 overlay masks and blend modes preview and persist non-destructively", a
   const restoredOverlay = page.locator(".stage .overlay").first();
   await expect(restoredOverlay).toHaveAttribute("data-mask-shape", "ellipse");
   await expect(restoredOverlay).toHaveAttribute("data-blend-mode", "multiply");
+});
+
+test("P6 motion presets generate editable brand-safe keyframes and persist", async ({ page }) => {
+  await page.goto("/");
+
+  await page.locator('input[accept="video/*,image/*"]').setInputFiles({
+    name: "motion-source.png",
+    mimeType: "image/png",
+    buffer: PNG_1X1,
+  });
+  await expect(page.getByTestId("timeline-clip")).toHaveCount(1);
+  await page.getByRole("button", { name: "+ Text", exact: true }).click();
+  await expect(page.getByTestId("motion-preset-grid")).toBeVisible();
+
+  const textEditor = page.locator("label").filter({ hasText: /^Text/ }).locator("textarea");
+  await textEditor.fill("Motion headline");
+
+  const stageText = page.locator(".stage .overlay").filter({ hasText: "Motion headline" });
+  const fontBefore = await stageText.locator("span").evaluate((el) => getComputedStyle(el).fontFamily);
+  const colorBefore = await stageText.locator("span").evaluate((el) => getComputedStyle(el).color);
+
+  await page.getByTestId("motion-preset-grid").getByRole("button", { name: /^Slide Up/ }).click();
+  await expect(page.getByTestId("overlay-keyframe")).toHaveCount(2);
+  await expect(page.getByLabel("Keyframe Y")).toHaveValue("34");
+  await expect(page.getByLabel("Keyframe opacity")).toHaveValue("0");
+
+  await page.getByTestId("overlay-keyframe").nth(1).click();
+  await expect(page.getByLabel("Keyframe Y")).toHaveValue("22");
+  await expect(page.getByLabel("Keyframe opacity")).toHaveValue("1");
+
+  await expect(stageText.locator("span")).toHaveCSS("font-family", new RegExp(fontBefore.split(",")[0].replace(/["']/g, "")));
+  await expect(stageText.locator("span")).toHaveCSS("color", colorBefore);
+
+  await expect(page.getByTestId("save-state")).toHaveText("Saved", { timeout: 5_000 });
+  await page.reload();
+
+  const restored = page.locator(".stage .overlay").filter({ hasText: "Motion headline" });
+  await restored.click();
+  await expect(page.getByTestId("overlay-keyframe")).toHaveCount(2);
+  await page.getByTestId("overlay-keyframe").first().click();
+  await expect(page.getByLabel("Keyframe Y")).toHaveValue("34");
+  await expect(page.getByLabel("Keyframe opacity")).toHaveValue("0");
 });

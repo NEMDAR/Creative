@@ -17,6 +17,7 @@ import { buildBoundedExperiments, buildLanguageVariants, type CampaignExperiment
 import { runBrandGuardian } from "../lib/marketing/guardian";
 import { EMPTY_MARKETING_BRIEF, normalizeMarketingBrief, validateMarketingBrief, type MarketingBrief, type MarketingLanguage, type MarketingPlatform } from "../lib/editor/marketing";
 import { createOverlayKeyframe, deleteOverlayKeyframe, resolveOverlayAnimation, upsertOverlayKeyframe } from "../lib/editor/keyframes";
+import { applyMotionPreset, MOTION_PRESETS, type MotionPresetId } from "../lib/editor/motion-presets";
 import { canvasCompositeOperation, normalizeOverlayBlendMode, normalizeOverlayMask, overlayClipPath } from "../lib/editor/compositing";
 import type { ServerRenderManifest } from "../lib/render/server-types";
 
@@ -2787,6 +2788,29 @@ export default function PhaseOneEditor() {
     setSelectedKeyframeId(null);
   }
 
+  function applySelectedMotionPreset(presetId: MotionPresetId) {
+    if (!selected) return;
+    const startTime = getOverlayStart(selected);
+    const rawEnd = getOverlayEnd(selected);
+    const endTime = Number.isFinite(rawEnd)
+      ? Math.min(rawEnd, timeline.duration || rawEnd)
+      : Math.max(startTime + 2, timeline.duration || startTime + 2);
+    const nextSelected = applyMotionPreset(
+      selected,
+      presetId,
+      startTime,
+      endTime
+    );
+
+    replaceProject((current) => ({
+      ...current,
+      overlays: current.overlays.map((overlay) =>
+        overlay.id === selected.id ? nextSelected : overlay
+      ),
+    }));
+    setSelectedKeyframeId(nextSelected.keyframes?.[0]?.id ?? null);
+  }
+
   function deleteSelected() {
     if (!selectedId) return;
     replaceProject((p) => ({ ...p, overlays: p.overlays.filter((o) => o.id !== selectedId) }));
@@ -5324,6 +5348,20 @@ export default function PhaseOneEditor() {
               <div className="clipMeta">
                 <strong>{selected.kind === "text" ? selected.text : "Image overlay"}</strong>
                 <span>{selected.keyframes?.length ?? 0} keyframes</span>
+              </div>
+              <div className="motionPresetGrid" data-testid="motion-preset-grid">
+                {MOTION_PRESETS.map((preset) => (
+                  <button
+                    type="button"
+                    key={preset.id}
+                    title={preset.description}
+                    disabled={timeline.duration <= 0}
+                    onClick={() => applySelectedMotionPreset(preset.id)}
+                  >
+                    <strong>{preset.label}</strong>
+                    <small>{preset.description}</small>
+                  </button>
+                ))}
               </div>
               <button
                 type="button"

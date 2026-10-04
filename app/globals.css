@@ -344,3 +344,11 @@ h2 { font-size:12px; text-transform:uppercase; letter-spacing:.1em; color:var(--
 .keyframeItem span,.keyframeItem small { color:var(--muted); font-size:8px; }
 .keyframeEditor { display:flex; flex-direction:column; gap:7px; padding-top:4px; }
 .keyframeValueGrid { display:grid; grid-template-columns:1fr 1fr; gap:7px; }
+
+.compositingInspector { display:grid; gap:8px; margin-bottom:14px; padding:10px; border:1px solid rgba(168,85,247,.22); border-radius:11px; background:rgba(168,85,247,.035); }
+.compositingInspector .ghost { width:100%; }
+
+.motionPresetGrid { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+.motionPresetGrid button { display:flex; flex-direction:column; gap:2px; align-items:flex-start; text-align:left; border:1px solid var(--line); border-radius:9px; padding:8px; background:var(--surface-2); color:var(--text); }
+.motionPresetGrid button strong { font-size:10px; }
+.motionPresetGrid button small { color:var(--muted); font-size:8px; line-height:1.3; }
