@@ -1,6 +1,9 @@
 export type RatioKey = "9:16" | "1:1" | "4:5" | "16:9";
 
 export type OverlayEasing = "linear" | "ease-in" | "ease-out" | "ease-in-out";
+export type OverlayMaskShape = "none" | "rectangle" | "ellipse";
+export type OverlayBlendMode = "normal" | "multiply" | "screen" | "overlay";
+export type OverlayMask = { shape: OverlayMaskShape; inset: number };
 
 export type OverlayKeyframeValue = {
   x: number;
@@ -31,6 +34,8 @@ export type TextOverlay = {
   scale?: number;
   rotation?: number;
   keyframes?: OverlayKeyframe[];
+  mask?: OverlayMask;
+  blendMode?: OverlayBlendMode;
   align: "left" | "center" | "right";
   direction: "ltr" | "rtl";
   startTime?: number;
@@ -48,6 +53,8 @@ export type ImageOverlay = {
   scale?: number;
   rotation?: number;
   keyframes?: OverlayKeyframe[];
+  mask?: OverlayMask;
+  blendMode?: OverlayBlendMode;
   startTime?: number;
   endTime?: number | null;
 };

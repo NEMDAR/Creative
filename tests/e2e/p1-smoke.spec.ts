@@ -1633,3 +1633,76 @@ test("P6 overlay keyframes interpolate transform opacity easing and persist", as
   await expect(reloadedOverlay).toHaveAttribute("data-motion-x", "50.000");
   await expect(reloadedOverlay).toHaveAttribute("data-motion-opacity", "0.600");
 });
+
+test("P6 overlay masks and blend modes preview export state and persist", async ({ page }) => {
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "+ Text", exact: true }).click();
+  await page.locator("label").filter({ hasText: /^Text/ }).locator("textarea").fill("Masked headline");
+
+  await page.getByLabel("Overlay mask shape").selectOption("ellipse");
+  await page.getByLabel("Overlay mask inset").fill("18");
+  await page.getByLabel("Overlay blend mode").selectOption("screen");
+
+  const overlay = page.locator(".stage .overlay").filter({ hasText: "Masked headline" });
+  await expect(overlay).toHaveAttribute("data-mask-shape", "ellipse");
+  await expect(overlay).toHaveAttribute("data-blend-mode", "screen");
+  await expect(overlay).toHaveCSS("mix-blend-mode", "screen");
+  await expect(overlay).toHaveCSS("clip-path", /ellipse/);
+
+  await expect(page.getByTestId("save-state")).toHaveText("Saved", { timeout: 5_000 });
+  await page.reload();
+
+  const restored = page.locator(".stage .overlay").filter({ hasText: "Masked headline" });
+  await expect(restored).toHaveAttribute("data-mask-shape", "ellipse");
+  await expect(restored).toHaveAttribute("data-blend-mode", "screen");
+  await restored.click();
+  await expect(page.getByLabel("Overlay mask shape")).toHaveValue("ellipse");
+  await expect(page.getByLabel("Overlay mask inset")).toHaveValue("18");
+  await expect(page.getByLabel("Overlay blend mode")).toHaveValue("screen");
+});
+
+test("P6 overlay masks and blend modes preview and persist non-destructively", async ({ page }) => {
+  await page.goto("/");
+
+  await page.locator('input[accept="video/*,image/*"]').setInputFiles({
+    name: "composite-source.png",
+    mimeType: "image/png",
+    buffer: PNG_1X1,
+  });
+
+  const logoInput = page
+    .locator("label.fileButton")
+    .filter({ hasText: "+ Logo / image" })
+    .locator('input[type="file"]');
+  await logoInput.setInputFiles({
+    name: "mask-layer.png",
+    mimeType: "image/png",
+    buffer: PNG_1X1,
+  });
+
+  await expect(page.getByTestId("compositing-inspector")).toBeVisible();
+  await page.getByLabel("Overlay mask shape").selectOption("ellipse");
+  await page.getByLabel("Overlay mask inset").fill("12");
+  await page.getByLabel("Overlay blend mode").selectOption("multiply");
+
+  const overlay = page.locator(".stage .overlay").first();
+  await expect(overlay).toHaveAttribute("data-mask-shape", "ellipse");
+  await expect(overlay).toHaveAttribute("data-blend-mode", "multiply");
+  await expect(overlay).toHaveCSS("mix-blend-mode", "multiply");
+  await expect(overlay).toHaveCSS("clip-path", /ellipse/);
+
+  page.once("dialog", async (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Save draft" }).click();
+  await expect(page.getByTestId("save-state")).toHaveText("Saved", { timeout: 5_000 });
+  await page.reload();
+
+  await expect(page.getByTestId("compositing-inspector")).toBeVisible();
+  await expect(page.getByLabel("Overlay mask shape")).toHaveValue("ellipse");
+  await expect(page.getByLabel("Overlay mask inset")).toHaveValue("12");
+  await expect(page.getByLabel("Overlay blend mode")).toHaveValue("multiply");
+
+  const restoredOverlay = page.locator(".stage .overlay").first();
+  await expect(restoredOverlay).toHaveAttribute("data-mask-shape", "ellipse");
+  await expect(restoredOverlay).toHaveAttribute("data-blend-mode", "multiply");
+});

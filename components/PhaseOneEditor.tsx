@@ -3,7 +3,7 @@
 import { ChangeEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { CAPTION_STYLE_PRESETS, captionCueAtTime, cloneCaptionStylePreset, normalizeCaptionStyle, normalizeCaptionTrack, type CaptionCue, type CaptionEmphasis, type CaptionLanguage, type CaptionPosition, type CaptionPresetId, type CaptionStyleConfig, type CaptionTrack } from "../lib/editor/captions";
 import { brandCaptionDefaults, DEFAULT_BRAND_KIT, normalizeBrandKit, type BrandKit } from "../lib/editor/brand-kit";
-import type { CreatorProject, Overlay, OverlayEasing, OverlayKeyframe, RatioKey, TextOverlay } from "../lib/editor/types";
+import type { CreatorProject, Overlay, OverlayBlendMode, OverlayEasing, OverlayKeyframe, OverlayMaskShape, RatioKey, TextOverlay } from "../lib/editor/types";
 import { listPhaseTwoSnapshots, loadBrandKit, loadPhaseOneDraft, loadPhaseTwoDraft, loadPhaseTwoSnapshot, saveBrandKit, savePhaseTwoDraft, savePhaseTwoSnapshot, type HydratedPhaseTwoState, type PhaseTwoSaveInput, type PhaseTwoSnapshotSummary } from "../lib/editor/storage";
 import { buildSequentialTimeline, createEmptyTimeline, deleteTimelineClip, duplicateTimelineClip, formatTimelineTime, getMaxTransitionDuration, getNextTimelineClip, getTransitionVisualState, isCrossfadeEligible, moveTimelineClip, removeTimelineRange, resolveTimelineTime, setTimelineClipTransition, setTimelinePlayhead, splitTimelineClip, timelineTimeForClip, trimTimelineClip, updateTimelineClipTransform, type ClipFitMode, type TimelineClip, type TimelineState, type TransitionType } from "../lib/editor/timeline";
 import { instantiateMarketingTemplate, MARKETING_TEMPLATES, type MarketingTemplateId } from "../lib/editor/templates";
@@ -17,6 +17,7 @@ import { buildBoundedExperiments, buildLanguageVariants, type CampaignExperiment
 import { runBrandGuardian } from "../lib/marketing/guardian";
 import { EMPTY_MARKETING_BRIEF, normalizeMarketingBrief, validateMarketingBrief, type MarketingBrief, type MarketingLanguage, type MarketingPlatform } from "../lib/editor/marketing";
 import { createOverlayKeyframe, deleteOverlayKeyframe, resolveOverlayAnimation, upsertOverlayKeyframe } from "../lib/editor/keyframes";
+import { canvasCompositeOperation, normalizeOverlayBlendMode, normalizeOverlayMask, overlayClipPath } from "../lib/editor/compositing";
 import type { ServerRenderManifest } from "../lib/render/server-types";
 
 const RATIOS: Record<RatioKey, { w: number; h: number }> = {
@@ -305,6 +306,42 @@ function captionPreviewStyle(style: CaptionStyleConfig): CSSProperties {
   };
 }
 
+function clipCanvasOverlayMask(
+  ctx: CanvasRenderingContext2D,
+  overlay: Overlay,
+  width: number,
+  height: number,
+  centered = false
+) {
+  const mask = normalizeOverlayMask(overlay.mask);
+  if (mask.shape === "none") return;
+
+  const insetX = (mask.inset / 100) * width;
+  const insetY = (mask.inset / 100) * height;
+  const left = centered ? -width / 2 + insetX : insetX;
+  const top = centered ? -height / 2 + insetY : insetY;
+  const clippedWidth = Math.max(1, width - insetX * 2);
+  const clippedHeight = Math.max(1, height - insetY * 2);
+
+  ctx.beginPath();
+  if (mask.shape === "ellipse") {
+    const centerX = centered ? 0 : width / 2;
+    const centerY = centered ? 0 : height / 2;
+    ctx.ellipse(
+      centerX,
+      centerY,
+      clippedWidth / 2,
+      clippedHeight / 2,
+      0,
+      0,
+      Math.PI * 2
+    );
+  } else {
+    ctx.rect(left, top, clippedWidth, clippedHeight);
+  }
+  ctx.clip();
+}
+
 async function rasterizeOverlayAsset(
   overlay: Overlay,
   outputWidth: number,
@@ -322,6 +359,7 @@ async function rasterizeOverlayAsset(
     canvas.height = height;
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("Unable to rasterize image overlay.");
+    clipCanvasOverlayMask(ctx, overlay, width, height, false);
     ctx.globalAlpha = overlay.opacity;
     ctx.drawImage(image, 0, 0, width, height);
     return { blob: await canvasPngBlob(canvas), width, height };
@@ -348,6 +386,7 @@ async function rasterizeOverlayAsset(
   canvas.height = height;
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Unable to rasterize text overlay.");
+  clipCanvasOverlayMask(ctx, overlay, width, height, false);
   ctx.font = `${overlay.fontWeight} ${fontSize}px ${overlay.fontFamily ?? "Arial, sans-serif"}`;
   ctx.fillStyle = overlay.color;
   ctx.globalAlpha = overlay.opacity;
@@ -3499,6 +3538,7 @@ export default function PhaseOneEditor() {
         ctx.translate((animated.x / 100) * canvas.width, (animated.y / 100) * canvas.height);
         ctx.rotate((animated.rotation * Math.PI) / 180);
         ctx.scale(animated.scale, animated.scale);
+        ctx.globalCompositeOperation = canvasCompositeOperation(overlay.blendMode);
         ctx.globalAlpha = animated.opacity;
         ctx.fillStyle = overlay.color;
         ctx.font = `${overlay.fontWeight} ${overlay.fontSize * (canvas.width / 720)}px ${overlay.fontFamily ?? "Arial, sans-serif"}`;
@@ -3516,6 +3556,8 @@ export default function PhaseOneEditor() {
         ctx.translate((animated.x / 100) * canvas.width, (animated.y / 100) * canvas.height);
         ctx.rotate((animated.rotation * Math.PI) / 180);
         ctx.scale(animated.scale, animated.scale);
+        clipCanvasOverlayMask(ctx, overlay, width, height, true);
+        ctx.globalCompositeOperation = canvasCompositeOperation(overlay.blendMode);
         ctx.globalAlpha = animated.opacity;
         ctx.drawImage(image, -width / 2, -height / 2, width, height);
         ctx.restore();
@@ -3572,6 +3614,7 @@ export default function PhaseOneEditor() {
         ctx.translate((animated.x / 100) * width, (animated.y / 100) * height);
         ctx.rotate((animated.rotation * Math.PI) / 180);
         ctx.scale(animated.scale, animated.scale);
+        ctx.globalCompositeOperation = canvasCompositeOperation(overlay.blendMode);
         ctx.globalAlpha = animated.opacity;
         ctx.fillStyle = overlay.color;
         ctx.font = `${overlay.fontWeight} ${overlay.fontSize * (width / 720)}px ${overlay.fontFamily ?? "Arial, sans-serif"}`;
@@ -3590,6 +3633,8 @@ export default function PhaseOneEditor() {
       ctx.translate((animated.x / 100) * width, (animated.y / 100) * height);
       ctx.rotate((animated.rotation * Math.PI) / 180);
       ctx.scale(animated.scale, animated.scale);
+      clipCanvasOverlayMask(ctx, overlay, renderedWidth, renderedHeight, true);
+      ctx.globalCompositeOperation = canvasCompositeOperation(overlay.blendMode);
       ctx.globalAlpha = animated.opacity;
       ctx.drawImage(
         image,
@@ -4965,10 +5010,14 @@ export default function PhaseOneEditor() {
                       data-motion-opacity={animated.opacity.toFixed(3)}
                       data-motion-scale={animated.scale.toFixed(3)}
                       data-motion-rotation={animated.rotation.toFixed(3)}
+                      data-mask-shape={normalizeOverlayMask(overlay.mask).shape}
+                      data-blend-mode={normalizeOverlayBlendMode(overlay.blendMode)}
                       style={{
                         left: `${animated.x}%`,
                         top: `${animated.y}%`,
                         transform: `translate(-50%,-50%) rotate(${animated.rotation}deg) scale(${animated.scale})`,
+                        clipPath: overlayClipPath(overlay.mask),
+                        mixBlendMode: normalizeOverlayBlendMode(overlay.blendMode),
                       }}
                       onPointerDown={(e) => dragOverlay(e, overlay)}
                       onClick={() => setSelectedId(overlay.id)}
@@ -5422,6 +5471,81 @@ export default function PhaseOneEditor() {
                   </button>
                 </div>
               )}
+            </div>
+          )}
+
+          <h2>Compositing</h2>
+          {!selected && <p className="hint">Select an overlay to configure masks and blend mode.</p>}
+          {selected && (
+            <div className="compositingInspector" data-testid="compositing-inspector">
+              <label>
+                Mask
+                <select
+                  aria-label="Overlay mask shape"
+                  value={normalizeOverlayMask(selected.mask).shape}
+                  onChange={(e) =>
+                    updateOverlay(selected.id, {
+                      mask: {
+                        ...normalizeOverlayMask(selected.mask),
+                        shape: e.target.value as OverlayMaskShape,
+                      },
+                    })
+                  }
+                >
+                  <option value="none">None</option>
+                  <option value="rectangle">Rectangle</option>
+                  <option value="ellipse">Ellipse</option>
+                </select>
+              </label>
+              <label>
+                Mask inset %
+                <input
+                  aria-label="Overlay mask inset"
+                  type="number"
+                  min={0}
+                  max={45}
+                  step={1}
+                  disabled={normalizeOverlayMask(selected.mask).shape === "none"}
+                  value={normalizeOverlayMask(selected.mask).inset}
+                  onChange={(e) =>
+                    updateOverlay(selected.id, {
+                      mask: {
+                        ...normalizeOverlayMask(selected.mask),
+                        inset: Math.max(0, Math.min(45, Number(e.target.value))),
+                      },
+                    })
+                  }
+                />
+              </label>
+              <label>
+                Blend mode
+                <select
+                  aria-label="Overlay blend mode"
+                  value={normalizeOverlayBlendMode(selected.blendMode)}
+                  onChange={(e) =>
+                    updateOverlay(selected.id, {
+                      blendMode: e.target.value as OverlayBlendMode,
+                    })
+                  }
+                >
+                  <option value="normal">Normal</option>
+                  <option value="multiply">Multiply</option>
+                  <option value="screen">Screen</option>
+                  <option value="overlay">Overlay</option>
+                </select>
+              </label>
+              <button
+                type="button"
+                className="ghost"
+                onClick={() =>
+                  updateOverlay(selected.id, {
+                    mask: { shape: "none", inset: 0 },
+                    blendMode: "normal",
+                  })
+                }
+              >
+                Reset compositing
+              </button>
             </div>
           )}
 
