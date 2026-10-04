@@ -261,3 +261,20 @@ h2 { font-size:12px; text-transform:uppercase; letter-spacing:.1em; color:var(--
 .brollList { display:flex; flex-direction:column; gap:5px; }
 .brollList button { display:grid; grid-template-columns:26px 1fr; gap:6px; align-items:center; text-align:left; border:1px solid var(--line); border-radius:8px; padding:7px; background:rgba(22,139,241,.055); color:var(--text); font-size:9px; }
 .brollList b { color:#8fc7ff; }
+
+.generationLedgerPanel { display:flex; flex-direction:column; gap:7px; padding:10px; border:1px solid rgba(22,139,241,.18); border-radius:11px; background:rgba(255,255,255,.018); }
+.generationLedgerSummary { display:flex; justify-content:space-between; gap:8px; align-items:center; font-size:10px; }
+.generationLedgerSummary span { color:var(--muted); }
+.generationRecord { display:flex; flex-direction:column; gap:3px; padding:7px; border:1px solid var(--line); border-radius:8px; background:var(--surface-2); }
+.generationRecord > div { display:flex; justify-content:space-between; gap:8px; }
+.generationRecord strong { font-size:10px; }
+.generationRecord span, .generationRecord small { color:var(--muted); font-size:9px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.generationRecord.succeeded { border-color:rgba(104,211,145,.26); }
+.generationRecord.failed { border-color:rgba(255,105,120,.3); }
+.provenancePanel { display:flex; flex-direction:column; gap:8px; padding:10px; border:1px solid rgba(22,139,241,.22); border-radius:11px; background:rgba(22,139,241,.04); }
+.provenanceGrid { display:grid; grid-template-columns:auto 1fr; gap:4px 8px; font-size:9px; }
+.provenanceGrid span { color:var(--muted); }
+.provenanceGrid strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.provenancePanel > small { color:var(--muted); font-size:9px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.provenanceActions { display:grid; grid-template-columns:1fr 1fr 1fr; gap:5px; }
+.provenanceActions button { border:1px solid var(--line); border-radius:7px; padding:6px; background:var(--surface-2); color:var(--text); font-size:9px; }

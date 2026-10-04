@@ -48,7 +48,7 @@ test("P1 image creative can be edited, saved, exported and restored", async ({ p
     .toBeGreaterThan(0);
 
   await page.getByRole("button", { name: "+ Text", exact: true }).click();
-  await page.getByLabel("Text").fill("إعلان تجريبي");
+  await page.getByLabel("Text", { exact: true }).fill("إعلان تجريبي");
   await page.getByLabel("Alignment").selectOption("right");
   await page.getByLabel("Opacity").first().fill("0.8");
 
@@ -85,14 +85,14 @@ test("P1 image creative can be edited, saved, exported and restored", async ({ p
 test("P1 undo/redo restores editor state", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "+ Text", exact: true }).click();
-  await page.getByLabel("Text").fill("First");
-  await page.getByLabel("Text").fill("Second");
+  await page.getByLabel("Text", { exact: true }).fill("First");
+  await page.getByLabel("Text", { exact: true }).fill("Second");
 
   await page.getByRole("button", { name: "Undo" }).click();
-  await expect(page.getByLabel("Text")).toHaveValue("First");
+  await expect(page.getByLabel("Text", { exact: true })).toHaveValue("First");
 
   await page.getByRole("button", { name: "Redo" }).click();
-  await expect(page.getByLabel("Text")).toHaveValue("Second");
+  await expect(page.getByLabel("Text", { exact: true })).toHaveValue("Second");
 });
 
 test("P1 video trim exports a timed WebM asset", async ({ page }) => {
@@ -115,7 +115,7 @@ test("P1 video trim exports a timed WebM asset", async ({ page }) => {
   await expect(page.getByRole("button", { name: "9:16", exact: true })).toHaveClass(/active/);
 
   await page.getByRole("button", { name: "+ Text", exact: true }).click();
-  await page.getByLabel("Text").fill("فيديو تجريبي Video");
+  await page.getByLabel("Text", { exact: true }).fill("فيديو تجريبي Video");
 
   const logoInput = page.getByLabel("+ Logo / image", { exact: true });
   await logoInput.setInputFiles({
@@ -251,7 +251,7 @@ test("P2 timed overlay tracks control text and logo visibility independently", a
   });
 
   await page.getByRole("button", { name: "+ Text", exact: true }).click();
-  await page.getByLabel("Text").fill("Timed overlay");
+  await page.getByLabel("Text", { exact: true }).fill("Timed overlay");
   await page.getByLabel("Overlay start").fill("1");
   await page.getByLabel("Overlay end").fill("2");
 
@@ -563,7 +563,7 @@ test("P2 durable server render queue exports a real MP4", async ({ page }) => {
 
   // Rendering runs on the server; editing remains interactive while the job is active.
   await page.getByRole("button", { name: "+ Text", exact: true }).click();
-  await expect(page.getByLabel("Text")).toBeVisible();
+  await expect(page.getByLabel("Text", { exact: true })).toBeVisible();
 
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toMatch(/\.mp4$/);
@@ -600,7 +600,7 @@ test("P2 representative long project stays responsive and renders MP4", async ({
 
   // Add a timed marketing overlay.
   await page.getByRole("button", { name: "+ Text", exact: true }).click();
-  await page.getByLabel("Text").fill("NEMDAR performance smoke");
+  await page.getByLabel("Text", { exact: true }).fill("NEMDAR performance smoke");
   await page.getByLabel("Overlay start").fill("2");
   await page.getByLabel("Overlay end").fill("6");
 
@@ -1013,7 +1013,7 @@ test("P3 Brand Kit persists and applies approved identity without duplicating lo
   await expect(page.getByTestId("brand-logo-preview")).toContainText("approved-logo.png");
 
   await page.getByRole("button", { name: "+ Text", exact: true }).click();
-  await page.getByLabel("Text").fill("Brand headline");
+  await page.getByLabel("Text", { exact: true }).fill("Brand headline");
   await page.getByRole("button", { name: "Apply Brand" }).click();
 
   const brandedText = page.locator(".stage .overlay span").filter({ hasText: "Brand headline" });
@@ -1067,7 +1067,7 @@ test("P3 marketing template creates a brand-safe editable project and persists e
   await expect(page.locator('.stage .overlay img[alt="Overlay"]')).toHaveCount(1);
   await expect(page.getByLabel("Caption safe zone")).toHaveValue("11");
 
-  const headline = page.getByLabel("Text");
+  const headline = page.getByLabel("Text", { exact: true });
   await expect(headline).toHaveValue("YOUR MAIN HOOK");
   const saveState = page.getByTestId("save-state");
   const before = await saveState.getAttribute("data-saved-at");
@@ -1297,4 +1297,40 @@ test("P4 storyboard stays editable and B-roll suggestions rank existing and gene
   await expect(page.getByLabel("Storyboard scene 1 title")).toHaveValue("Opening Hook");
   await expect(page.getByLabel("Storyboard scene 1 duration")).toHaveValue("7");
   await expect(page.getByTestId("broll-list").first()).toContainText("existing-broll.png");
+});
+
+test("P4 generation ledger and provenance persist result lineage and review status", async ({ page }) => {
+  await page.goto("/");
+
+  await page.getByLabel("Image prompt").fill("Premium branded property key visual");
+  await page.getByRole("button", { name: "Generate image" }).click();
+
+  await expect(page.getByTestId("generation-record")).toHaveCount(1);
+  const firstRecord = page.getByTestId("generation-record").first();
+  await expect(firstRecord).toContainText("generate");
+  await expect(firstRecord).toContainText("succeeded");
+  await expect(firstRecord).toContainText("mock-");
+
+  await expect(page.getByTestId("provenance-panel")).toBeVisible();
+  await expect(page.getByTestId("provenance-review")).toHaveText("unreviewed");
+  await expect(page.getByTestId("provenance-panel")).toContainText("provider-terms");
+
+  await page.getByRole("button", { name: "Approve", exact: true }).click();
+  await expect(page.getByTestId("provenance-review")).toHaveText("approved");
+
+  await page.getByLabel("Image edit prompt").fill("Add warmer premium lighting");
+  await page.getByRole("button", { name: "AI edit selected" }).click();
+
+  await expect(page.getByTestId("generation-record")).toHaveCount(2);
+  await expect(page.getByTestId("generation-record").first()).toContainText("edit");
+  await expect(page.getByTestId("provenance-panel")).toContainText("ai-edited");
+  await expect(page.getByTestId("provenance-panel")).toContainText("Source");
+
+  await expect(page.getByTestId("save-state")).toHaveText("Saved", { timeout: 5_000 });
+  await page.reload();
+
+  await expect(page.getByTestId("generation-record")).toHaveCount(2);
+  await page.locator(".assetCard").first().click();
+  await expect(page.getByTestId("provenance-review")).toHaveText("approved");
+  await expect(page.getByTestId("provenance-panel")).toContainText("provider-terms");
 });

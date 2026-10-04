@@ -9,7 +9,7 @@ import { buildSequentialTimeline, createEmptyTimeline, deleteTimelineClip, dupli
 import { instantiateMarketingTemplate, MARKETING_TEMPLATES, type MarketingTemplateId } from "../lib/editor/templates";
 import { compileEditorCommand, type EditorCommandPlan } from "../lib/editor/command-bar";
 import type { ProviderCapability, ProviderDirectorySnapshot, ProviderArtifact } from "../lib/providers/contracts";
-import type { AssetGenerationMetadata } from "../lib/editor/assets";
+import { withDefaultProvenance, type AssetGenerationMetadata, type AssetReviewStatus, type GenerationRecord } from "../lib/editor/assets";
 import type { BrollOption, StoryboardAssetNeed, StoryboardPlan, StoryboardScene } from "../lib/editor/storyboard";
 import type { ServerRenderManifest } from "../lib/render/server-types";
 
@@ -388,6 +388,7 @@ export default function PhaseOneEditor() {
   const [storyboard, setStoryboard] = useState<StoryboardPlan | null>(null);
   const [storyboardState, setStoryboardState] = useState<"idle" | "generating" | "error">("idle");
   const [storyboardError, setStoryboardError] = useState<string | null>(null);
+  const [generationLedger, setGenerationLedger] = useState<GenerationRecord[]>([]);
   const [captionLanguage, setCaptionLanguage] = useState<CaptionLanguage>("auto");
   const [captionState, setCaptionState] = useState<"idle" | "generating" | "ready" | "error">("idle");
   const [captionError, setCaptionError] = useState<string | null>(null);
@@ -961,6 +962,7 @@ export default function PhaseOneEditor() {
     setCaptions(null);
     setStoryboard(null);
     setStoryboardBrief("");
+    setGenerationLedger([]);
     setCaptionLanguage("auto");
     setCaptionState("idle");
     setSelectedCaptionId(null);
@@ -989,6 +991,7 @@ export default function PhaseOneEditor() {
           captionStyle: instantiated.captionStyle,
           brandKit,
           storyboard: null,
+          generationLedger: [],
           timelineZoom: 1,
           snapEnabled: true,
           selectedClipId: null,
@@ -1028,6 +1031,85 @@ export default function PhaseOneEditor() {
         error instanceof Error ? error.message : "Unable to change AI provider."
       );
     }
+  }
+
+  function providerIdentity(capability: ProviderCapability) {
+    const providerId = providerDirectory?.selections[capability] ?? "unknown";
+    const descriptor = providerDirectory?.providers.find(
+      (provider) => provider.id === providerId
+    );
+    const model = descriptor?.models[capability]?.[0] ?? "unknown";
+    return { provider: providerId || "unknown", model };
+  }
+
+  function appendGenerationRecord(
+    record: Omit<GenerationRecord, "id" | "createdAt" | "completedAt">
+  ) {
+    const now = Date.now();
+    setGenerationLedger((current) =>
+      [
+        ...current,
+        {
+          ...record,
+          id: crypto.randomUUID(),
+          createdAt: now,
+          completedAt: now,
+        },
+      ].slice(-100)
+    );
+  }
+
+  function recordGenerationSuccess(
+    capability: GenerationRecord["capability"],
+    metadata: AssetGenerationMetadata,
+    resultAssetId: string
+  ) {
+    appendGenerationRecord({
+      capability,
+      operation: metadata.operation,
+      provider: metadata.provider,
+      model: metadata.model,
+      request: metadata.prompt,
+      status: "succeeded",
+      estimatedCost: metadata.estimatedCost,
+      resultAssetId,
+      sourceAssetId: metadata.sourceAssetId,
+    });
+  }
+
+  function recordGenerationFailure(
+    capability: ProviderCapability,
+    operation: GenerationRecord["operation"],
+    request: string,
+    error: unknown
+  ) {
+    const identity = providerIdentity(capability);
+    appendGenerationRecord({
+      capability,
+      operation,
+      provider: identity.provider,
+      model: identity.model,
+      request,
+      status: "failed",
+      estimatedCost: null,
+      error: error instanceof Error ? error.message : "Generation failed.",
+    });
+  }
+
+  function reviewSelectedGeneratedAsset(reviewStatus: AssetReviewStatus) {
+    if (!media?.generation) return;
+    const generation = withDefaultProvenance({
+      ...media.generation,
+      reviewStatus,
+    });
+    setMediaItems((current) =>
+      current.map((item) =>
+        item.id === media.id ? { ...item, generation } : item
+      )
+    );
+    setMedia((current) =>
+      current?.id === media.id ? { ...current, generation } : current
+    );
   }
 
   async function generateImageAsset() {
@@ -1076,21 +1158,25 @@ export default function PhaseOneEditor() {
         type: artifact.mimeType,
         blob: normalizedBlob,
         duration: 5,
-        generation: {
+        generation: withDefaultProvenance({
           provider: artifact.provider,
           model: artifact.model,
           prompt: payload.prompt ?? prompt,
           createdAt: payload.createdAt ?? Date.now(),
           estimatedCost: payload.estimatedCost ?? null,
           operation: "generate",
-        },
+        }),
       };
 
       setMediaItems((current) => [...current, item]);
       setMedia(item);
       setDuration(0);
+      if (item.generation) {
+        recordGenerationSuccess("image", item.generation, item.id);
+      }
       setImageGenerationState("idle");
     } catch (error) {
+      recordGenerationFailure("image", "generate", prompt, error);
       setImageGenerationState("error");
       setImageGenerationError(
         error instanceof Error ? error.message : "Unable to generate image."
@@ -1168,7 +1254,7 @@ export default function PhaseOneEditor() {
         type: artifact.mimeType,
         blob: normalizedBlob,
         duration: 5,
-        generation: {
+        generation: withDefaultProvenance({
           provider: artifact.provider,
           model: artifact.model,
           prompt: payload.prompt ?? normalizedPrompt,
@@ -1177,14 +1263,18 @@ export default function PhaseOneEditor() {
           operation: payload.operation ?? operation,
           sourceAssetId: source.id,
           requestedAspectRatio: payload.requestedAspectRatio ?? aspectRatio,
-        },
+        }),
       };
 
       setMediaItems((current) => [...current, item]);
       setMedia(item);
       setDuration(0);
+      if (item.generation) {
+        recordGenerationSuccess("image", item.generation, item.id);
+      }
       setImageToolState("idle");
     } catch (error) {
+      recordGenerationFailure("image", operation, normalizedPrompt, error);
       setImageToolState("error");
       setImageToolError(
         error instanceof Error ? error.message : "Unable to edit image."
@@ -1250,7 +1340,7 @@ export default function PhaseOneEditor() {
         type: artifact.mimeType,
         blob: normalizedBlob,
         duration: detectedDuration,
-        generation: {
+        generation: withDefaultProvenance({
           provider: artifact.provider,
           model: artifact.model,
           prompt: payload.prompt ?? prompt,
@@ -1260,14 +1350,23 @@ export default function PhaseOneEditor() {
           sourceAssetId: sourceImage?.id,
           requestedAspectRatio: project.ratio,
           requestedDurationSeconds: videoDurationSeconds,
-        },
+        }),
       };
 
       setMediaItems((current) => [...current, item]);
       setMedia(item);
       setDuration(detectedDuration);
+      if (item.generation) {
+        recordGenerationSuccess("video", item.generation, item.id);
+      }
       setVideoGenerationState("idle");
     } catch (error) {
+      recordGenerationFailure(
+        "video",
+        useSelectedImage ? "image_to_video" : "video_generate",
+        prompt,
+        error
+      );
       setVideoGenerationState("error");
       setVideoGenerationError(
         error instanceof Error ? error.message : "Unable to generate video."
@@ -1326,7 +1425,7 @@ export default function PhaseOneEditor() {
           ? Math.min(audioDuration, Math.max(0.1, timeline.duration - startTime))
           : audioDuration;
 
-      setAudioTrack({
+      const generatedAudio: AudioTrackItem = {
         id: crypto.randomUUID(),
         url,
         name: `ai-voiceover-${Date.now()}.wav`,
@@ -1339,7 +1438,7 @@ export default function PhaseOneEditor() {
         fadeOut: 0,
         duckingEnabled: false,
         duckingGain: 0.3,
-        generation: {
+        generation: withDefaultProvenance({
           provider: artifact.provider,
           model: artifact.model,
           prompt: payload.text ?? text,
@@ -1348,10 +1447,15 @@ export default function PhaseOneEditor() {
           operation: "voice_synthesize",
           language: payload.language ?? voiceLanguage,
           voice: payload.voice ?? "default",
-        },
-      });
+        }),
+      };
+      setAudioTrack(generatedAudio);
+      if (generatedAudio.generation) {
+        recordGenerationSuccess("voice", generatedAudio.generation, generatedAudio.id);
+      }
       setVoiceGenerationState("idle");
     } catch (error) {
+      recordGenerationFailure("voice", "voice_synthesize", text, error);
       setVoiceGenerationState("error");
       setVoiceGenerationError(
         error instanceof Error ? error.message : "Unable to generate voiceover."
@@ -2440,6 +2544,7 @@ export default function PhaseOneEditor() {
       captionStyle,
       brandKit,
       storyboard,
+      generationLedger,
       timelineZoom,
       snapEnabled,
       selectedClipId,
@@ -2455,6 +2560,9 @@ export default function PhaseOneEditor() {
   function restorePhaseTwoState(state: HydratedPhaseTwoState) {
     const restoredMediaItems: MediaItem[] = state.mediaItems.map((item) => ({
       ...item,
+      generation: item.generation
+        ? withDefaultProvenance(item.generation)
+        : undefined,
       url: createObjectUrl(item.blob),
     }));
     const restoredAudio: AudioTrackItem | null = state.audioTrack
@@ -2462,6 +2570,9 @@ export default function PhaseOneEditor() {
           ...state.audioTrack,
           duckingEnabled: state.audioTrack.duckingEnabled ?? false,
           duckingGain: state.audioTrack.duckingGain ?? 0.3,
+          generation: state.audioTrack.generation
+            ? withDefaultProvenance(state.audioTrack.generation)
+            : undefined,
           url: createObjectUrl(state.audioTrack.blob),
         }
       : null;
@@ -2475,6 +2586,7 @@ export default function PhaseOneEditor() {
     setBrandKit(normalizeBrandKit(state.brandKit));
     setStoryboard(state.storyboard ?? null);
     setStoryboardBrief(state.storyboard?.brief ?? "");
+    setGenerationLedger(state.generationLedger ?? []);
     setCaptionLanguage(state.captions?.requestedLanguage ?? "auto");
     setCaptionState(state.captions?.cues.length ? "ready" : "idle");
     setSelectedCaptionId(state.captions?.cues[0]?.id ?? null);
@@ -2589,6 +2701,7 @@ export default function PhaseOneEditor() {
       captionStyle: normalizeCaptionStyle(state.captionStyle),
       brandKit: normalizeBrandKit(state.brandKit),
       storyboard: state.storyboard ?? null,
+      generationLedger: state.generationLedger ?? [],
       timelineZoom: state.timelineZoom,
       snapEnabled: state.snapEnabled,
       selectedClipId: state.selectedClipId,
@@ -2659,7 +2772,8 @@ export default function PhaseOneEditor() {
       project.overlays.length > 0 ||
       audioTrack !== null ||
       captions !== null ||
-      storyboard !== null;
+      storyboard !== null ||
+      generationLedger.length > 0;
     if (!hasMeaningfulState) return;
 
     if (autosaveTimerRef.current !== null) {
@@ -2704,6 +2818,7 @@ export default function PhaseOneEditor() {
     captionStyle,
     brandKit,
     storyboard,
+    generationLedger,
     timelineZoom,
     snapEnabled,
   ]);
@@ -3490,6 +3605,88 @@ export default function PhaseOneEditor() {
             ))}
             {providerError && <p className="providerError">{providerError}</p>}
           </div>
+
+          <h2>Generation Ledger</h2>
+          <div className="generationLedgerPanel" data-testid="generation-ledger">
+            <div className="generationLedgerSummary">
+              <strong>{generationLedger.length} records</strong>
+              <span>
+                Est. cost {generationLedger
+                  .reduce((sum, record) => sum + (record.estimatedCost ?? 0), 0)
+                  .toFixed(4)}
+              </span>
+            </div>
+            {generationLedger.length === 0 && (
+              <p className="hint">AI generations will appear here with provider/model/result linkage.</p>
+            )}
+            {generationLedger.slice(-6).reverse().map((record) => (
+              <div
+                className={`generationRecord ${record.status}`}
+                key={record.id}
+                data-testid="generation-record"
+              >
+                <div>
+                  <strong>{record.operation}</strong>
+                  <span>{record.status}</span>
+                </div>
+                <small>{record.provider} · {record.model}</small>
+                <small title={record.request}>{record.request}</small>
+                <small>
+                  cost {record.estimatedCost ?? 0}
+                  {record.resultAssetId ? ` · result ${record.resultAssetId.slice(0, 8)}` : ""}
+                </small>
+              </div>
+            ))}
+          </div>
+
+          {media?.generation && (
+            <>
+              <h2>Provenance</h2>
+              <div className="provenancePanel" data-testid="provenance-panel">
+                <div className="provenanceGrid">
+                  <span>Origin</span>
+                  <strong>{media.generation.origin ?? "ai-generated"}</strong>
+                  <span>Provider</span>
+                  <strong>{media.generation.provider}</strong>
+                  <span>Model</span>
+                  <strong>{media.generation.model}</strong>
+                  <span>Rights</span>
+                  <strong>{media.generation.rightsStatus ?? "provider-terms"}</strong>
+                  <span>Review</span>
+                  <strong data-testid="provenance-review">
+                    {media.generation.reviewStatus ?? "unreviewed"}
+                  </strong>
+                  {media.generation.sourceAssetId && (
+                    <>
+                      <span>Source</span>
+                      <strong>{media.generation.sourceAssetId.slice(0, 8)}</strong>
+                    </>
+                  )}
+                </div>
+                <small title={media.generation.prompt}>{media.generation.prompt}</small>
+                <div className="provenanceActions">
+                  <button
+                    type="button"
+                    onClick={() => reviewSelectedGeneratedAsset("approved")}
+                  >
+                    Approve
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => reviewSelectedGeneratedAsset("rejected")}
+                  >
+                    Reject
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => reviewSelectedGeneratedAsset("unreviewed")}
+                  >
+                    Reset
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
 
           <h2>AI Image</h2>
           <div className="imageGenerationPanel" data-testid="image-generation-panel">

@@ -10,4 +10,41 @@ export type AssetGenerationMetadata = {
   requestedDurationSeconds?: number;
   language?: string;
   voice?: string;
+  origin?: "ai-generated" | "ai-edited";
+  rightsStatus?: "provider-terms" | "review-required";
+  reviewStatus?: "unreviewed" | "approved" | "rejected";
 };
+
+export type AssetReviewStatus = "unreviewed" | "approved" | "rejected";
+
+export type GenerationRecord = {
+  id: string;
+  capability: "image" | "video" | "voice" | "planning";
+  operation: AssetGenerationMetadata["operation"] | "storyboard" | "broll";
+  provider: string;
+  model: string;
+  request: string;
+  status: "succeeded" | "failed";
+  estimatedCost: number | null;
+  resultAssetId?: string;
+  sourceAssetId?: string;
+  createdAt: number;
+  completedAt: number;
+  error?: string;
+};
+
+export function withDefaultProvenance(
+  metadata: AssetGenerationMetadata
+): AssetGenerationMetadata {
+  return {
+    ...metadata,
+    origin:
+      metadata.operation === "generate" ||
+      metadata.operation === "video_generate" ||
+      metadata.operation === "voice_synthesize"
+        ? "ai-generated"
+        : "ai-edited",
+    rightsStatus: metadata.rightsStatus ?? "provider-terms",
+    reviewStatus: metadata.reviewStatus ?? "unreviewed",
+  };
+}
