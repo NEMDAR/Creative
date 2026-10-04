@@ -4600,7 +4600,7 @@ export default function PhaseOneEditor() {
         <div className="topActions">
           <button className="ghost" onClick={undo}>Undo</button>
           <button className="ghost" onClick={redo}>Redo</button>
-          <button className="ghost" onClick={loadDraft}>Load draft</button>
+          <button className="ghost" onClick={loadDraft} disabled={!storageHydrated}>Load draft</button>
           <button className="ghost" onClick={saveDraft}>Save draft</button>
           <button className="ghost" onClick={exportAsset} disabled={exportState === "rendering"}>{exportState === "rendering" ? `Exporting ${exportProgress}%` : media?.kind === "video" ? "Export video" : "Export frame"}</button>
           <button

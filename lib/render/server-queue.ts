@@ -242,13 +242,18 @@ export async function scheduleRenderQueue() {
 
 export async function kickRenderJob(jobId: string) {
   if (runningJobs.has(jobId) || runningJobs.size >= maxConcurrency()) return;
-  const job = await readJob(jobId);
-  if (!job || job.status !== "queued") return;
 
-  const attempt = job.attempts + 1;
-  const workerId = `worker-${process.pid}-${randomUUID().slice(0, 8)}`;
+  // Claim synchronously before the first await so concurrent scheduler passes
+  // cannot start the same durable job twice.
   runningJobs.add(jobId);
+  const workerId = `worker-${process.pid}-${randomUUID().slice(0, 8)}`;
+  let job: DurableRenderJob | null = null;
+  let attempt = 0;
   try {
+    job = await readJob(jobId);
+    if (!job || job.status !== "queued") return;
+
+    attempt = job.attempts + 1;
     const dir = jobDir(jobId);
     const manifest = await readJson<ServerRenderManifest>(manifestFile(jobId));
     const assets = await readJson<AssetMap>(assetMapFile(jobId));
@@ -291,6 +296,7 @@ export async function kickRenderJob(jobId: string) {
       error instanceof Error
         ? error.message.slice(-6000)
         : "Unexpected render worker failure.";
+    if (!job) return;
     if (attempt < job.maxAttempts) {
       await updateJob(jobId, {
         status: "queued",

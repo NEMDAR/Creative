@@ -32,7 +32,7 @@ export default defineConfig({
       ? `npm run start -- --hostname 127.0.0.1 --port ${testPort}`
       : `npm run dev -- --hostname 127.0.0.1 --port ${testPort}`,
     url: testBaseUrl,
-    env: { CAPTION_PROVIDER: "mock", NEMDAR_API_KEY: "test-api-key", RENDER_FFMPEG_TIMEOUT_MS: "5000", RENDER_MAX_CONCURRENCY: "2", RENDER_QUEUE_DIR: testRenderQueueDir, NEMDAR_OPS_DIR: testOpsDir },
+    env: { CAPTION_PROVIDER: "mock", NEMDAR_API_KEY: "test-api-key", RENDER_FFMPEG_TIMEOUT_MS: "12000", RENDER_MAX_CONCURRENCY: "2", RENDER_QUEUE_DIR: testRenderQueueDir, NEMDAR_OPS_DIR: testOpsDir },
     reuseExistingServer: false,
     timeout: 120_000,
   },

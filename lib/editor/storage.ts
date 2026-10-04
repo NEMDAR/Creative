@@ -291,14 +291,17 @@ async function hydratePhaseTwoState(
 ): Promise<HydratedPhaseTwoState> {
   const tx = db.transaction(ASSET_STORE, "readonly");
   const store = tx.objectStore(ASSET_STORE);
+  const assetRecords = await requestResult<AssetRecord[]>(store.getAll());
+  await transactionDone(tx);
+  const assetsById = new Map(
+    assetRecords.map((asset) => [asset.id, asset] as const)
+  );
 
   const mediaItems: PersistableMediaItem[] = [];
   for (const item of state.mediaItems) {
-    const asset = await requestResult<AssetRecord | undefined>(store.get(item.id));
+    const asset = assetsById.get(item.id);
     if (!asset?.blob) continue;
-    const proxyAsset = await requestResult<AssetRecord | undefined>(
-      store.get(`proxy:${item.id}`)
-    );
+    const proxyAsset = assetsById.get(`proxy:${item.id}`);
     mediaItems.push({
       ...item,
       blob: asset.blob,
@@ -308,9 +311,7 @@ async function hydratePhaseTwoState(
 
   let audioTrack: PersistableAudioTrack | null = null;
   if (state.audioTrack) {
-    const asset = await requestResult<AssetRecord | undefined>(
-      store.get(state.audioTrack.id)
-    );
+    const asset = assetsById.get(state.audioTrack.id);
     if (asset?.blob) {
       audioTrack = {
         ...state.audioTrack,
@@ -318,8 +319,6 @@ async function hydratePhaseTwoState(
       };
     }
   }
-
-  await transactionDone(tx);
 
   return {
     project: state.project,
