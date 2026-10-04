@@ -76,7 +76,24 @@ function extensionFor(file: File) {
 async function writeJsonAtomic(path: string, value: unknown) {
   const temp = `${path}.tmp-${process.pid}-${randomUUID()}`;
   await fs.writeFile(temp, JSON.stringify(value, null, 2), "utf8");
-  await fs.rename(temp, path);
+
+  // Windows can transiently reject an atomic rename while another reader,
+  // antivirus scanner, or indexer still has the destination handle open.
+  // Treat that as I/O contention, not as a failed render attempt.
+  const retryable = new Set(["EPERM", "EBUSY", "EACCES"]);
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    try {
+      await fs.rename(temp, path);
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code ?? "";
+      if (!retryable.has(code) || attempt === 5) {
+        await fs.rm(temp, { force: true }).catch(() => undefined);
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25 * (attempt + 1)));
+    }
+  }
 }
 
 async function readJson<T>(path: string): Promise<T> {
