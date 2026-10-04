@@ -1401,3 +1401,24 @@ test("P5 marketing brief captures governed campaign context and persists", async
   await expect(page.getByLabel("Brief prohibited claims")).toContainText("Guaranteed ROI");
   await expect(page.getByTestId("marketing-brief")).toContainText("Ready for concepts");
 });
+
+test("P5 brief-to-edit orchestration creates storyboard generated asset ratio and editable overlays", async ({ page }) => {
+  await page.goto("/");
+  await page.getByLabel("Brief product").fill("NEMDAR Creator");
+  await page.getByLabel("Brief audience").fill("UAE property marketers");
+  await page.getByLabel("Brief objective").fill("Generate leads");
+  await page.getByLabel("Brief offer").fill("Book a demo");
+  await page.getByLabel("Brief CTA").fill("Request demo");
+  await page.getByLabel("Brief approved claims").fill("AI-assisted creative workflow");
+  await page.getByRole("button", { name: "Generate concepts" }).click();
+
+  await page.getByRole("button", { name: "Build initial edit" }).first().click();
+
+  await expect(page.getByTestId("storyboard-meta")).toContainText("concept-scene-plan-v1");
+  await expect(page.locator(".assetCard")).toHaveCount(1);
+  await expect(page.getByTestId("asset-generation-meta")).toContainText("generate");
+  await expect(page.getByTestId("overlay-track-item")).toHaveCount(2);
+  await expect(page.getByTestId("overlay-track-item").first()).toContainText("text");
+  await expect(page.getByTestId("overlay-track-item").nth(1)).toContainText("text");
+  await expect(page.getByRole("button", { name: "9:16", exact: true }).first()).toHaveClass(/active/);
+});

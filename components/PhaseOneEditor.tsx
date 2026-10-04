@@ -1139,8 +1139,8 @@ export default function PhaseOneEditor() {
     );
   }
 
-  async function generateImageAsset() {
-    const prompt = imagePrompt.trim();
+  async function generateImageAsset(promptOverride?: string) {
+    const prompt = (promptOverride ?? imagePrompt).trim();
     if (!prompt) {
       setImageGenerationState("error");
       setImageGenerationError("Write an image prompt first.");
@@ -1512,6 +1512,55 @@ export default function PhaseOneEditor() {
     const concepts = buildCreativeConcepts(marketingBrief);
     setCreativeConcepts(concepts);
     setSelectedConceptId(concepts[0]?.id ?? null);
+  }
+
+  async function orchestrateConceptToEdit(concept: CreativeConcept) {
+    sendConceptToStoryboard(concept);
+
+    const primaryPlatform = marketingBrief.platforms[0] ?? "instagram-reels";
+    const targetRatio: RatioKey =
+      primaryPlatform === "instagram-feed"
+        ? "1:1"
+        : primaryPlatform === "linkedin" || primaryPlatform === "x"
+          ? "16:9"
+          : "9:16";
+
+    const timing = defaultOverlayTiming();
+    const hookOverlay: TextOverlay = {
+      id: crypto.randomUUID(),
+      kind: "text",
+      text: concept.hook,
+      x: 50,
+      y: 18,
+      fontSize: 42,
+      fontWeight: brandKit.headingWeight,
+      fontFamily: brandKit.headingFont,
+      color: brandKit.primaryColor,
+      opacity: 1,
+      align: "center",
+      direction: marketingBrief.languages[0] === "ar" ? "rtl" : "ltr",
+      ...timing,
+    };
+    const ctaOverlay: TextOverlay = {
+      ...hookOverlay,
+      id: crypto.randomUUID(),
+      text: concept.cta,
+      y: 82,
+      fontSize: 30,
+    };
+
+    replaceProject((current) => ({
+      ...current,
+      ratio: targetRatio,
+      overlays: [...current.overlays, hookOverlay, ctaOverlay],
+    }));
+    setSelectedId(hookOverlay.id);
+
+    const firstScene = concept.scenes[0];
+    if (firstScene) {
+      setImagePrompt(firstScene.visualPrompt);
+      await generateImageAsset(firstScene.visualPrompt);
+    }
   }
 
   function sendConceptToStoryboard(concept: CreativeConcept) {
@@ -3677,7 +3726,10 @@ export default function PhaseOneEditor() {
                 <label>Hook<input aria-label={`${concept.title} hook`} value={concept.hook} onChange={(e)=>setCreativeConcepts((items)=>items.map((item)=>item.id===concept.id?{...item,hook:e.target.value}:item))}/></label>
                 <label>CTA<input aria-label={`${concept.title} CTA`} value={concept.cta} onChange={(e)=>setCreativeConcepts((items)=>items.map((item)=>item.id===concept.id?{...item,cta:e.target.value}:item))}/></label>
                 <label>Script<textarea aria-label={`${concept.title} script`} value={concept.script} onChange={(e)=>setCreativeConcepts((items)=>items.map((item)=>item.id===concept.id?{...item,script:e.target.value}:item))}/></label>
-                <button type="button" className="toolButton" onClick={()=>sendConceptToStoryboard(concept)}>Use concept → scene plan</button>
+                <div className="conceptActions">
+                  <button type="button" className="toolButton" onClick={()=>sendConceptToStoryboard(concept)}>Use concept → scene plan</button>
+                  <button type="button" className="primary" onClick={()=>void orchestrateConceptToEdit(concept)}>Build initial edit</button>
+                </div>
               </article>
             ))}
           </div>
