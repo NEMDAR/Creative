@@ -5,7 +5,7 @@ import { CAPTION_STYLE_PRESETS, captionCueAtTime, cloneCaptionStylePreset, norma
 import { brandCaptionDefaults, DEFAULT_BRAND_KIT, normalizeBrandKit, type BrandKit } from "../lib/editor/brand-kit";
 import type { CreatorProject, Overlay, OverlayBlendMode, OverlayEasing, OverlayKeyframe, OverlayMaskShape, RatioKey, TextOverlay } from "../lib/editor/types";
 import { listPhaseTwoSnapshots, loadBrandKit, loadPhaseOneDraft, loadPhaseTwoDraft, loadPhaseTwoSnapshot, saveBrandKit, savePhaseTwoDraft, savePhaseTwoSnapshot, type HydratedPhaseTwoState, type PhaseTwoSaveInput, type PhaseTwoSnapshotSummary } from "../lib/editor/storage";
-import { buildSequentialTimeline, createEmptyTimeline, deleteTimelineClip, duplicateTimelineClip, formatTimelineTime, getMaxTransitionDuration, getNextTimelineClip, getTransitionVisualState, isCrossfadeEligible, moveTimelineClip, removeTimelineRange, resolveTimelineTime, setTimelineClipTransition, setTimelinePlayhead, splitTimelineClip, timelineTimeForClip, trimTimelineClip, updateTimelineClipTransform, type ClipFitMode, type TimelineClip, type TimelineState, type TransitionType } from "../lib/editor/timeline";
+import { buildSequentialTimeline, createEmptyTimeline, deleteTimelineClip, duplicateTimelineClip, formatTimelineTime, getMaxTransitionDuration, getNextTimelineClip, getTransitionVisualState, isCrossfadeEligible, moveTimelineClip, normalizeClipChroma, removeTimelineRange, resolveTimelineTime, setTimelineClipTransition, setTimelinePlayhead, splitTimelineClip, timelineTimeForClip, trimTimelineClip, updateTimelineClipChroma, updateTimelineClipTransform, type ClipChromaKey, type ClipFitMode, type TimelineClip, type TimelineState, type TransitionType } from "../lib/editor/timeline";
 import { instantiateMarketingTemplate, MARKETING_TEMPLATES, type MarketingTemplateId } from "../lib/editor/templates";
 import { compileEditorCommand, type EditorCommandPlan } from "../lib/editor/command-bar";
 import type { ProviderCapability, ProviderDirectorySnapshot, ProviderArtifact } from "../lib/providers/contracts";
@@ -343,6 +343,77 @@ function clipCanvasOverlayMask(
   ctx.clip();
 }
 
+function applyChromaKeyPixels(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  chromaInput?: Partial<ClipChromaKey> | null
+) {
+  const chroma = normalizeClipChroma(chromaInput);
+  if (!chroma.enabled || width <= 0 || height <= 0) return;
+
+  const imageData = ctx.getImageData(0, 0, width, height);
+  const data = imageData.data;
+  const key = hexToRgb(chroma.keyColor);
+  const maxDistance = Math.sqrt(255 * 255 * 3);
+  const threshold = chroma.tolerance * maxDistance;
+  const feather = Math.max(6, threshold * 0.35);
+  const dominant =
+    key.r >= key.g && key.r >= key.b
+      ? 0
+      : key.g >= key.r && key.g >= key.b
+        ? 1
+        : 2;
+
+  for (let i = 0; i < data.length; i += 4) {
+    const dr = data[i] - key.r;
+    const dg = data[i + 1] - key.g;
+    const db = data[i + 2] - key.b;
+    const distance = Math.sqrt(dr * dr + dg * dg + db * db);
+
+    if (distance <= threshold) {
+      data[i + 3] = 0;
+      continue;
+    }
+
+    if (distance < threshold + feather) {
+      data[i + 3] = Math.round(
+        data[i + 3] * ((distance - threshold) / feather)
+      );
+    }
+
+    if (chroma.spill > 0 && distance < threshold + feather * 2.5) {
+      const closeness = 1 - Math.min(1, distance / (threshold + feather * 2.5));
+      const channels = [data[i], data[i + 1], data[i + 2]];
+      const otherMax = Math.max(
+        channels[(dominant + 1) % 3],
+        channels[(dominant + 2) % 3]
+      );
+      channels[dominant] = Math.round(
+        channels[dominant] -
+          Math.max(0, channels[dominant] - otherMax) *
+            chroma.spill *
+            closeness
+      );
+      data[i] = channels[0];
+      data[i + 1] = channels[1];
+      data[i + 2] = channels[2];
+    }
+  }
+
+  ctx.putImageData(imageData, 0, 0);
+}
+
+function hexToRgb(hex: string) {
+  const normalized = hex.replace("#", "");
+  const parsed = Number.parseInt(normalized, 16);
+  return {
+    r: (parsed >> 16) & 255,
+    g: (parsed >> 8) & 255,
+    b: parsed & 255,
+  };
+}
+
 async function rasterizeOverlayAsset(
   overlay: Overlay,
   outputWidth: number,
@@ -481,6 +552,7 @@ export default function PhaseOneEditor() {
   const [snapEnabled, setSnapEnabled] = useState(true);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const chromaPreviewCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const mediaObjectUrls = useRef<string[]>([]);
   const pendingSeekRef = useRef<{ assetId: string; sourceTime: number } | null>(null);
@@ -718,6 +790,60 @@ export default function PhaseOneEditor() {
     videoRef.current.playbackRate =
       activeMediaClip?.kind === "video" ? activeMediaClip.transform.speed : 1;
   }, [activeMediaClip]);
+
+  useEffect(() => {
+    const chroma = normalizeClipChroma(activeMediaClip?.chroma);
+    const canvas = chromaPreviewCanvasRef.current;
+    if (!media || !canvas || !chroma.enabled) return;
+
+    const ratio = RATIOS[project.ratio];
+    const width = 480;
+    const height = Math.max(1, Math.round(width * (ratio.h / ratio.w)));
+    canvas.width = width;
+    canvas.height = height;
+
+    let animationFrame = 0;
+    const video = media.kind === "video" ? videoRef.current : null;
+    const image =
+      media.kind === "image"
+        ? (document.getElementById("creative-image") as HTMLImageElement | null)
+        : null;
+
+    const render = () => {
+      const ctx = canvas.getContext("2d");
+      const source = video ?? image;
+      if (!ctx || !source) return;
+
+      const ready =
+        source instanceof HTMLVideoElement
+          ? source.readyState >= 2
+          : source.complete && source.naturalWidth > 0;
+
+      if (ready) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        drawMediaFrame(ctx, source, canvas.width, canvas.height, activeMediaClip);
+      }
+
+      if (video && !video.paused && !video.ended) {
+        animationFrame = requestAnimationFrame(render);
+      }
+    };
+
+    const onFrame = () => render();
+    video?.addEventListener("play", onFrame);
+    video?.addEventListener("seeked", onFrame);
+    video?.addEventListener("timeupdate", onFrame);
+    image?.addEventListener("load", onFrame);
+    render();
+
+    return () => {
+      cancelAnimationFrame(animationFrame);
+      video?.removeEventListener("play", onFrame);
+      video?.removeEventListener("seeked", onFrame);
+      video?.removeEventListener("timeupdate", onFrame);
+      image?.removeEventListener("load", onFrame);
+    };
+  }, [media, activeMediaClip, project.ratio, timeline.playhead]);
 
   function clipMediaStyle(
     clip: TimelineClip | null,
@@ -2651,6 +2777,15 @@ export default function PhaseOneEditor() {
     );
   }
 
+  function updateSelectedClipChroma(
+    patch: Partial<ClipChromaKey>
+  ) {
+    if (!selectedClip) return;
+    setTimeline((current) =>
+      updateTimelineClipChroma(current, selectedClip.id, patch)
+    );
+  }
+
   function moveMediaItem(id: string, direction: -1 | 1) {
     const index = mediaItems.findIndex((item) => item.id === id);
     const target = index + direction;
@@ -3916,6 +4051,14 @@ export default function PhaseOneEditor() {
     const transform = clip?.transform;
     const fit = transform?.fit ?? "cover";
     const zoom = transform?.zoom ?? 1;
+    const chroma = normalizeClipChroma(clip?.chroma);
+
+    const keyedCanvas = chroma.enabled ? document.createElement("canvas") : null;
+    const targetCtx = keyedCanvas?.getContext("2d") ?? ctx;
+    if (keyedCanvas) {
+      keyedCanvas.width = Math.max(1, Math.round(w));
+      keyedCanvas.height = Math.max(1, Math.round(h));
+    }
 
     let scaleX = 1;
     let scaleY = 1;
@@ -3939,11 +4082,20 @@ export default function PhaseOneEditor() {
     const dy = (h - dh) * cropY;
     const rotation = ((transform?.rotation ?? 0) * Math.PI) / 180;
 
-    ctx.save();
-    ctx.translate(w / 2, h / 2);
-    ctx.rotate(rotation);
-    ctx.drawImage(source, dx - w / 2, dy - h / 2, dw, dh);
-    ctx.restore();
+    targetCtx.save();
+    targetCtx.translate(w / 2, h / 2);
+    targetCtx.rotate(rotation);
+    targetCtx.drawImage(source, dx - w / 2, dy - h / 2, dw, dh);
+    targetCtx.restore();
+
+    if (keyedCanvas && targetCtx !== ctx) {
+      applyChromaKeyPixels(targetCtx, keyedCanvas.width, keyedCanvas.height, chroma);
+      ctx.save();
+      ctx.fillStyle = chroma.backgroundColor;
+      ctx.fillRect(0, 0, w, h);
+      ctx.drawImage(keyedCanvas, 0, 0, w, h);
+      ctx.restore();
+    }
   }
 
   const ratio = RATIOS[project.ratio];
@@ -5002,6 +5154,15 @@ export default function PhaseOneEditor() {
                 />
               )}
               {media?.kind === "image" && <img id="creative-image" src={media.url} alt="Creative source" className="mediaLayer" style={clipMediaStyle(activeMediaClip, transitionVisual.primaryClip?.assetId === media.id ? transitionVisual.primaryOpacity : 1)} />}
+              {normalizeClipChroma(activeMediaClip?.chroma).enabled && (
+                <canvas
+                  ref={chromaPreviewCanvasRef}
+                  className="mediaLayer chromaPreviewCanvas"
+                  data-testid="chroma-preview"
+                  data-chroma-key={normalizeClipChroma(activeMediaClip?.chroma).keyColor}
+                  data-chroma-background={normalizeClipChroma(activeMediaClip?.chroma).backgroundColor}
+                />
+              )}
               {transitionVisual.type === "crossfade" && transitionSecondaryMedia?.kind === "image" && (
                 <img
                   data-testid="transition-media-layer"
@@ -6244,6 +6405,89 @@ export default function PhaseOneEditor() {
                   </small>
                 )}
                 {smartReframeError && <p className="captionError">{smartReframeError}</p>}
+              </div>
+              <div className="chromaPanel" data-testid="chroma-panel">
+                <label className="toggleLabel">
+                  <input
+                    aria-label="Chroma key enabled"
+                    type="checkbox"
+                    checked={normalizeClipChroma(selectedClip.chroma).enabled}
+                    onChange={(e) =>
+                      updateSelectedClipChroma({ enabled: e.target.checked })
+                    }
+                  />
+                  Chroma key / background replacement
+                </label>
+                <div className="chromaGrid">
+                  <label>
+                    Key color
+                    <input
+                      aria-label="Chroma key color"
+                      type="color"
+                      value={normalizeClipChroma(selectedClip.chroma).keyColor}
+                      onChange={(e) =>
+                        updateSelectedClipChroma({ keyColor: e.target.value })
+                      }
+                    />
+                  </label>
+                  <label>
+                    Background
+                    <input
+                      aria-label="Chroma background color"
+                      type="color"
+                      value={normalizeClipChroma(selectedClip.chroma).backgroundColor}
+                      onChange={(e) =>
+                        updateSelectedClipChroma({ backgroundColor: e.target.value })
+                      }
+                    />
+                  </label>
+                </div>
+                <label>
+                  Tolerance {Math.round(normalizeClipChroma(selectedClip.chroma).tolerance * 100)}%
+                  <input
+                    aria-label="Chroma tolerance"
+                    type="range"
+                    min={0.01}
+                    max={1}
+                    step={0.01}
+                    value={normalizeClipChroma(selectedClip.chroma).tolerance}
+                    onChange={(e) =>
+                      updateSelectedClipChroma({ tolerance: Number(e.target.value) })
+                    }
+                  />
+                </label>
+                <label>
+                  Spill suppression {Math.round(normalizeClipChroma(selectedClip.chroma).spill * 100)}%
+                  <input
+                    aria-label="Chroma spill"
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    value={normalizeClipChroma(selectedClip.chroma).spill}
+                    onChange={(e) =>
+                      updateSelectedClipChroma({ spill: Number(e.target.value) })
+                    }
+                  />
+                </label>
+                {selectedClip.kind === "video" && normalizeClipChroma(selectedClip.chroma).enabled && (
+                  <button
+                    type="button"
+                    className="ghost"
+                    onClick={() => {
+                      const video = videoRef.current;
+                      if (!video) return;
+                      if (video.paused) {
+                        void video.play().catch(() => undefined);
+                      } else {
+                        video.pause();
+                      }
+                    }}
+                  >
+                    Play / pause keyed preview
+                  </button>
+                )}
+                <small>Pixel keying is non-destructive and is applied to preview/export while the source asset remains unchanged.</small>
               </div>
               {selectedNextClip ? (
                 <div className="transitionInspector" data-testid="transition-inspector">

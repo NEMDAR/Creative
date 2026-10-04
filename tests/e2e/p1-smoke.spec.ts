@@ -7,6 +7,11 @@ const PNG_1X1 = Buffer.from(
   "base64"
 );
 
+const GREEN_PNG_1X1 = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNg+M/wHwAEAQH/cetH5QAAAABJRU5ErkJggg==",
+  "base64"
+);
+
 const WEBM_CLIP = Buffer.from(
   "GkXfo59ChoEBQveBAULygQRC84EIQoKEd2VibUKHgQJChYECGFOAZwEAAAAAAANsEU2bdLpNu4tTq4QVSalmU6yBoU27i1OrhBZUrmtTrIHWTbuMU6uEElTDZ1OsggEjTbuMU6uEHFO7a1OsggNW7AEAAAAAAABZAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAVSalmsCrXsYMPQkBNgIxMYXZmNjEuNy4xMDNXQYxMYXZmNjEuNy4xMDNEiYhAgsAAAAAAABZUrmvIrgEAAAAAAAA/14EBc8WIjSjSH7I+PAmcgQAitZyDdW5kiIEAhoVWX1ZQOIOBASPjg4QCYloA4JCwgaC6gVqagQJVsIRVuYEBElTDZ/tzc59jwIBnyJlFo4dFTkNPREVSRIeMTGF2ZjYxLjcuMTAzc3PWY8CLY8WIjSjSH7I+PAlnyKFFo4dFTkNPREVSRIeUTGF2YzYxLjE5LjEwMSBsaWJ2cHhnyKFFo4hEVVJBVElPTkSHkzAwOjAwOjAwLjYwMDAwMDAwMAAfQ7Z1Qa3ngQCjvYEAAIBQBQCdASqgAFoAAEcIhYWIhYSIAgIABigPCHVUmu4h1VJruIdVSa7iHVUmu4h1VJruIbwA/v+rUICjmIEAKAARAgABEBAAGAAYWC/0AAiAgQAAAKOYgQBQABECAAEQEAAYABhYL/QACICBAAAAo5iBAHgAEQIAARAQABgAGFgv9AAIgIEAAACjmIEAoAARAgABEBAAGAAYWC/0AAiAgQAAAKOYgQDIABECAAEQEAAYABhYL/QACICBAAAAo5iBAPAAEQIAARAQABgAGFgv9AAIgIEAAACjl4EBGADxAQABEBAUYABhYL/QACICBAAAo5iBAUAAEQIAARAQABgAGFgv9AAIgIEAAACjmIEBaAARAgABEBAAGAAYWC/0AAiAgQAAAKOYgQGQABECAAEQEAAYABhYL/QACICBAAAAo5iBAbgAEQIAARAQABgAGFgv9AAIgIEAAACjmIEB4AARAgABEBAAGAAYWC/0AAiAgQAAAKOYgQIIABECAAEQEAAYABhYL/QACICBAAAAo5iBAjAAEQIAARAQABgAGFgv9AAIgIEAAAAcU7trkbuPs4EAt4r3gQHxggGj8IED",
   "base64"
@@ -1749,4 +1754,50 @@ test("P6 motion presets generate editable brand-safe keyframes and persist", asy
   await page.getByTestId("overlay-keyframe").first().click();
   await expect(page.getByLabel("Keyframe Y")).toHaveValue("34");
   await expect(page.getByLabel("Keyframe opacity")).toHaveValue("0");
+});
+
+test("P6 chroma key replaces keyed pixels non-destructively and persists", async ({ page }) => {
+  await page.goto("/");
+
+  await page.locator('input[accept="video/*,image/*"]').setInputFiles({
+    name: "green-screen.png",
+    mimeType: "image/png",
+    buffer: GREEN_PNG_1X1,
+  });
+  await expect(page.getByTestId("timeline-clip")).toHaveCount(1);
+
+  await page.getByLabel("Chroma key enabled").check();
+  await page.getByLabel("Chroma key color").fill("#00ff00");
+  await page.getByLabel("Chroma tolerance").fill("0.25");
+  await page.getByLabel("Chroma spill").fill("0.5");
+  await page.getByLabel("Chroma background color").fill("#112233");
+
+  const preview = page.getByTestId("chroma-preview");
+  await expect(preview).toBeVisible();
+  await expect(preview).toHaveAttribute("data-chroma-key", "#00FF00");
+  await expect(preview).toHaveAttribute("data-chroma-background", "#112233");
+
+  await expect.poll(async () => {
+    return preview.evaluate((canvas: HTMLCanvasElement) => {
+      const ctx = canvas.getContext("2d");
+      if (!ctx || canvas.width === 0 || canvas.height === 0) return "";
+      const pixel = ctx.getImageData(
+        Math.floor(canvas.width / 2),
+        Math.floor(canvas.height / 2),
+        1,
+        1
+      ).data;
+      return [pixel[0], pixel[1], pixel[2], pixel[3]].join(",");
+    });
+  }, { timeout: 5_000 }).toBe("17,34,51,255");
+
+  await expect(page.getByTestId("save-state")).toHaveText("Saved", { timeout: 5_000 });
+  await page.reload();
+
+  await expect(page.getByLabel("Chroma key enabled")).toBeChecked();
+  await expect(page.getByLabel("Chroma key color")).toHaveValue("#00ff00");
+  await expect(page.getByLabel("Chroma background color")).toHaveValue("#112233");
+  await expect(page.getByLabel("Chroma tolerance")).toHaveValue("0.25");
+  await expect(page.getByLabel("Chroma spill")).toHaveValue("0.5");
+  await expect(page.getByTestId("chroma-preview")).toBeVisible();
 });

@@ -11,6 +11,36 @@ export type ClipTransform = {
   speed: number;
 };
 
+export type ClipChromaKey = {
+  enabled: boolean;
+  keyColor: string;
+  tolerance: number;
+  spill: number;
+  backgroundColor: string;
+};
+
+export const DEFAULT_CLIP_CHROMA: ClipChromaKey = {
+  enabled: false,
+  keyColor: "#00FF00",
+  tolerance: 0.22,
+  spill: 0.35,
+  backgroundColor: "#0B1020",
+};
+
+export function normalizeClipChroma(
+  chroma?: Partial<ClipChromaKey> | null
+): ClipChromaKey {
+  return {
+    enabled: Boolean(chroma?.enabled),
+    keyColor: normalizeHex(chroma?.keyColor ?? DEFAULT_CLIP_CHROMA.keyColor),
+    tolerance: clamp(chroma?.tolerance ?? DEFAULT_CLIP_CHROMA.tolerance, 0.01, 1),
+    spill: clamp(chroma?.spill ?? DEFAULT_CLIP_CHROMA.spill, 0, 1),
+    backgroundColor: normalizeHex(
+      chroma?.backgroundColor ?? DEFAULT_CLIP_CHROMA.backgroundColor
+    ),
+  };
+}
+
 export type ClipTransition = {
   type: Exclude<TransitionType, "none">;
   duration: number;
@@ -27,6 +57,7 @@ export type TimelineClip = {
   sourceDuration: number | null;
   transitionOut: ClipTransition | null;
   transform: ClipTransform;
+  chroma: ClipChromaKey;
 };
 
 export type TimelineTrack = {
@@ -109,6 +140,7 @@ export function buildSequentialTimeline(
         rotation: 0,
         speed: 1,
       },
+      chroma: { ...DEFAULT_CLIP_CHROMA },
     };
     cursor += duration;
     return clip;
@@ -296,6 +328,20 @@ export function moveTimelineClip(
 
   [clips[index], clips[target]] = [clips[target], clips[index]];
   return reflowTimeline(timeline, clips);
+}
+
+export function updateTimelineClipChroma(
+  timeline: TimelineState,
+  clipId: string,
+  patch: Partial<ClipChromaKey>
+): TimelineState {
+  const clips = timeline.tracks[0]?.clips ?? [];
+  const next = clips.map((clip) =>
+    clip.id === clipId
+      ? { ...clip, chroma: normalizeClipChroma({ ...clip.chroma, ...patch }) }
+      : clip
+  );
+  return reflowTimeline(timeline, next);
 }
 
 export function updateTimelineClipTransform(
@@ -572,6 +618,7 @@ function reflowTimeline(
       ...clip,
       timelineStart: cursor,
       duration: Math.max(0.1, clip.duration),
+      chroma: normalizeClipChroma(clip.chroma),
     };
     cursor += next.duration;
     return next;
@@ -610,6 +657,13 @@ function reflowTimeline(
     duration: cursor,
     tracks: [{ id: "visual-1", kind: "visual", clips: normalized }],
   };
+}
+
+function normalizeHex(value: string) {
+  const candidate = value.trim();
+  return /^#[0-9a-f]{6}$/i.test(candidate)
+    ? candidate.toUpperCase()
+    : "#00FF00";
 }
 
 function clamp(value: number, min: number, max: number) {

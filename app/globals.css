@@ -352,3 +352,11 @@ h2 { font-size:12px; text-transform:uppercase; letter-spacing:.1em; color:var(--
 .motionPresetGrid button { display:flex; flex-direction:column; gap:2px; align-items:flex-start; text-align:left; border:1px solid var(--line); border-radius:9px; padding:8px; background:var(--surface-2); color:var(--text); }
 .motionPresetGrid button strong { font-size:10px; }
 .motionPresetGrid button small { color:var(--muted); font-size:8px; line-height:1.3; }
+
+.chromaPreviewCanvas { z-index:1; pointer-events:none; width:100%; height:100%; object-fit:fill; }
+.chromaPanel { display:flex; flex-direction:column; gap:8px; padding:10px; border:1px solid rgba(34,197,94,.22); border-radius:11px; background:rgba(34,197,94,.035); }
+.chromaPanel .toggleLabel { display:flex; flex-direction:row; align-items:center; gap:8px; }
+.chromaPanel .toggleLabel input { width:auto; }
+.chromaGrid { display:grid; grid-template-columns:1fr 1fr; gap:7px; }
+.chromaGrid input[type="color"] { width:100%; height:34px; padding:3px; }
+.chromaPanel small { color:var(--muted); font-size:9px; line-height:1.4; }
