@@ -1453,3 +1453,40 @@ test("P5 master creative generates four editable platform variants and persists"
   await expect(page.getByTestId("campaign-variant")).toHaveCount(4);
   await expect(page.getByTestId("variant-count")).toContainText("4 editable variants");
 });
+
+test("P5 language variants preserve master linkage and experiments stay bounded to three", async ({ page }) => {
+  await page.goto("/");
+
+  await page.getByLabel("Brief product").fill("NEMDAR Creator");
+  await page.getByLabel("Brief audience").fill("UAE marketing teams");
+  await page.getByLabel("Brief objective").fill("Generate qualified leads");
+  await page.getByLabel("Brief CTA").fill("Request a demo");
+  await page.getByLabel("Brief approved claims").fill("AI-assisted creative workflow");
+  await page.getByRole("button", { name: "EN", exact: true }).click();
+
+  await page.getByRole("button", { name: "Generate concepts" }).click();
+  await page.getByRole("button", { name: "Build initial edit" }).first().click();
+
+  await page.getByRole("button", { name: "Generate AR / EN variants" }).click();
+  await expect(page.getByTestId("language-variant")).toHaveCount(2);
+  await expect(page.getByTestId("language-variant-grid")).toContainText("AR");
+  await expect(page.getByTestId("language-variant-grid")).toContainText("EN");
+
+  const arabicVariant = page.locator('[data-testid="language-variant"][dir="rtl"]');
+  await expect(arabicVariant).toContainText("Review");
+  await arabicVariant.getByRole("button", { name: "Apply language" }).click();
+  await expect(page.locator(".stage .overlay span").first()).toHaveCSS("direction", "rtl");
+
+  await page.getByRole("button", { name: "Generate 3 experiments" }).click();
+  await expect(page.getByTestId("campaign-experiment")).toHaveCount(3);
+  await expect(page.getByTestId("experiment-grid")).toContainText("Master");
+
+  await page.getByTestId("campaign-experiment").nth(1).getByRole("button", { name: "Apply experiment" }).click();
+  await expect(page.getByLabel("Problem → Outcome hook")).toHaveValue(/Quick take:/);
+
+  await expect(page.getByTestId("save-state")).toHaveText("Saved", { timeout: 5_000 });
+  await page.reload();
+
+  await expect(page.getByTestId("language-variant")).toHaveCount(2);
+  await expect(page.getByTestId("campaign-experiment")).toHaveCount(3);
+});

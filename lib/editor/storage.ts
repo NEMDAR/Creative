@@ -5,6 +5,7 @@ import type { TimelineState } from "./timeline";
 import type { StoryboardPlan } from "./storyboard";
 import type { MarketingBrief } from "./marketing";
 import type { CampaignVariant } from "../marketing/variants";
+import type { CampaignExperiment, CampaignLanguageVariant } from "../marketing/experiments";
 import type { CreatorProject } from "./types";
 
 export type PersistedSourceMedia = {
@@ -58,6 +59,8 @@ export type PhaseTwoSaveInput = {
   generationLedger: GenerationRecord[];
   marketingBrief: MarketingBrief;
   campaignVariants: CampaignVariant[];
+  languageVariants: CampaignLanguageVariant[];
+  campaignExperiments: CampaignExperiment[];
   timelineZoom: number;
   snapEnabled: boolean;
   selectedClipId: string | null;
@@ -79,6 +82,8 @@ type PersistedPhaseTwoState = {
   generationLedger: GenerationRecord[];
   marketingBrief: MarketingBrief;
   campaignVariants: CampaignVariant[];
+  languageVariants: CampaignLanguageVariant[];
+  campaignExperiments: CampaignExperiment[];
   timelineZoom: number;
   snapEnabled: boolean;
   selectedClipId: string | null;
@@ -187,6 +192,8 @@ function toPersistedPhaseTwoState(input: PhaseTwoSaveInput): PersistedPhaseTwoSt
     generationLedger: input.generationLedger ?? [],
     marketingBrief: input.marketingBrief,
     campaignVariants: input.campaignVariants ?? [],
+    languageVariants: input.languageVariants ?? [],
+    campaignExperiments: input.campaignExperiments ?? [],
     timelineZoom: input.timelineZoom,
     snapEnabled: input.snapEnabled,
     selectedClipId: input.selectedClipId,
@@ -267,6 +274,8 @@ async function hydratePhaseTwoState(
     generationLedger: state.generationLedger ?? [],
     marketingBrief: state.marketingBrief,
     campaignVariants: state.campaignVariants ?? [],
+    languageVariants: state.languageVariants ?? [],
+    campaignExperiments: state.campaignExperiments ?? [],
     timelineZoom: state.timelineZoom,
     snapEnabled: state.snapEnabled,
     selectedClipId: state.selectedClipId,

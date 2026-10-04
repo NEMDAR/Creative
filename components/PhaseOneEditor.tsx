@@ -13,6 +13,7 @@ import { withDefaultProvenance, type AssetGenerationMetadata, type AssetReviewSt
 import type { BrollOption, StoryboardAssetNeed, StoryboardPlan, StoryboardScene } from "../lib/editor/storyboard";
 import { buildCreativeConcepts, type CreativeConcept } from "../lib/marketing/brief";
 import { buildCampaignVariants, type CampaignVariant } from "../lib/marketing/variants";
+import { buildBoundedExperiments, buildLanguageVariants, type CampaignExperiment, type CampaignLanguageVariant } from "../lib/marketing/experiments";
 import { EMPTY_MARKETING_BRIEF, normalizeMarketingBrief, validateMarketingBrief, type MarketingBrief, type MarketingLanguage, type MarketingPlatform } from "../lib/editor/marketing";
 import type { ServerRenderManifest } from "../lib/render/server-types";
 
@@ -411,6 +412,8 @@ export default function PhaseOneEditor() {
   const [creativeConcepts, setCreativeConcepts] = useState<CreativeConcept[]>([]);
   const [selectedConceptId, setSelectedConceptId] = useState<string | null>(null);
   const [campaignVariants, setCampaignVariants] = useState<CampaignVariant[]>([]);
+  const [languageVariants, setLanguageVariants] = useState<CampaignLanguageVariant[]>([]);
+  const [campaignExperiments, setCampaignExperiments] = useState<CampaignExperiment[]>([]);
   const [captionLanguage, setCaptionLanguage] = useState<CaptionLanguage>("auto");
   const [captionState, setCaptionState] = useState<"idle" | "generating" | "ready" | "error">("idle");
   const [captionError, setCaptionError] = useState<string | null>(null);
@@ -992,6 +995,8 @@ export default function PhaseOneEditor() {
     setGenerationLedger([]);
     setMarketingBrief(normalizeMarketingBrief(EMPTY_MARKETING_BRIEF));
     setCampaignVariants([]);
+    setLanguageVariants([]);
+    setCampaignExperiments([]);
     setCaptionLanguage("auto");
     setCaptionState("idle");
     setSelectedCaptionId(null);
@@ -1023,6 +1028,8 @@ export default function PhaseOneEditor() {
           generationLedger: [],
           marketingBrief: normalizeMarketingBrief(EMPTY_MARKETING_BRIEF),
           campaignVariants: [],
+          languageVariants: [],
+          campaignExperiments: [],
           timelineZoom: 1,
           snapEnabled: true,
           selectedClipId: null,
@@ -1565,6 +1572,83 @@ export default function PhaseOneEditor() {
       setImagePrompt(firstScene.visualPrompt);
       await generateImageAsset(firstScene.visualPrompt);
     }
+  }
+
+  function selectedCreativeConcept() {
+    return (
+      creativeConcepts.find((item) => item.id === selectedConceptId) ??
+      creativeConcepts[0] ??
+      null
+    );
+  }
+
+  function generateLanguageCampaignVariants() {
+    const concept = selectedCreativeConcept();
+    if (!concept) return;
+    setLanguageVariants(buildLanguageVariants(concept, marketingBrief));
+  }
+
+  function applyLanguageVariant(variant: CampaignLanguageVariant) {
+    const concept = selectedCreativeConcept();
+    if (!concept) return;
+
+    let hookApplied = false;
+    let ctaApplied = false;
+    replaceProject((current) => ({
+      ...current,
+      name: `${current.name} — ${variant.language.toUpperCase()}`,
+      overlays: current.overlays.map((overlay) => {
+        if (overlay.kind !== "text") return overlay;
+        if (!hookApplied && (overlay.text === concept.hook || overlay.y < 50)) {
+          hookApplied = true;
+          return {
+            ...overlay,
+            text: variant.hook,
+            direction: variant.direction,
+            align: "center",
+          };
+        }
+        if (!ctaApplied && (overlay.text === concept.cta || overlay.y >= 50)) {
+          ctaApplied = true;
+          return {
+            ...overlay,
+            text: variant.cta,
+            direction: variant.direction,
+            align: "center",
+          };
+        }
+        return overlay;
+      }),
+    }));
+  }
+
+  function generateCampaignExperiments() {
+    const concept = selectedCreativeConcept();
+    if (!concept) return;
+    setCampaignExperiments(buildBoundedExperiments(concept));
+  }
+
+  function applyCampaignExperiment(experiment: CampaignExperiment) {
+    const concept = selectedCreativeConcept();
+    if (!concept) return;
+
+    setCreativeConcepts((items) =>
+      items.map((item) =>
+        item.id === concept.id
+          ? { ...item, hook: experiment.hook, cta: experiment.cta }
+          : item
+      )
+    );
+
+    replaceProject((current) => ({
+      ...current,
+      overlays: current.overlays.map((overlay) => {
+        if (overlay.kind !== "text") return overlay;
+        if (overlay.text === concept.hook) return { ...overlay, text: experiment.hook };
+        if (overlay.text === concept.cta) return { ...overlay, text: experiment.cta };
+        return overlay;
+      }),
+    }));
   }
 
   function generatePlatformVariants() {
@@ -2731,6 +2815,8 @@ export default function PhaseOneEditor() {
       generationLedger,
       marketingBrief,
       campaignVariants,
+      languageVariants,
+      campaignExperiments,
       timelineZoom,
       snapEnabled,
       selectedClipId,
@@ -2775,6 +2861,8 @@ export default function PhaseOneEditor() {
     setGenerationLedger(state.generationLedger ?? []);
     setMarketingBrief(normalizeMarketingBrief(state.marketingBrief));
     setCampaignVariants(state.campaignVariants ?? []);
+    setLanguageVariants(state.languageVariants ?? []);
+    setCampaignExperiments(state.campaignExperiments ?? []);
     setCaptionLanguage(state.captions?.requestedLanguage ?? "auto");
     setCaptionState(state.captions?.cues.length ? "ready" : "idle");
     setSelectedCaptionId(state.captions?.cues[0]?.id ?? null);
@@ -2892,6 +2980,8 @@ export default function PhaseOneEditor() {
       generationLedger: state.generationLedger ?? [],
       marketingBrief: normalizeMarketingBrief(state.marketingBrief),
       campaignVariants: state.campaignVariants ?? [],
+      languageVariants: state.languageVariants ?? [],
+      campaignExperiments: state.campaignExperiments ?? [],
       timelineZoom: state.timelineZoom,
       snapEnabled: state.snapEnabled,
       selectedClipId: state.selectedClipId,
@@ -2964,6 +3054,9 @@ export default function PhaseOneEditor() {
       captions !== null ||
       storyboard !== null ||
       generationLedger.length > 0 ||
+      campaignVariants.length > 0 ||
+      languageVariants.length > 0 ||
+      campaignExperiments.length > 0 ||
       Boolean(marketingBrief.product || marketingBrief.audience || marketingBrief.objective || marketingBrief.cta);
     if (!hasMeaningfulState) return;
 
@@ -3011,6 +3104,9 @@ export default function PhaseOneEditor() {
     storyboard,
     generationLedger,
     marketingBrief,
+    campaignVariants,
+    languageVariants,
+    campaignExperiments,
     timelineZoom,
     snapEnabled,
   ]);
@@ -3780,6 +3876,51 @@ export default function PhaseOneEditor() {
                 <small>{variant.hook}</small>
                 <button type="button" className="toolButton" onClick={() => loadCampaignVariant(variant)}>
                   Edit variant
+                </button>
+              </article>
+            ))}
+          </div>
+        )}
+
+        <div className="variantToolbar">
+          <button type="button" className="toolButton" disabled={!selectedCreativeConcept()} onClick={generateLanguageCampaignVariants}>
+            Generate AR / EN variants
+          </button>
+          <button type="button" className="toolButton" disabled={!selectedCreativeConcept()} onClick={generateCampaignExperiments}>
+            Generate 3 experiments
+          </button>
+        </div>
+
+        {languageVariants.length > 0 && (
+          <div className="languageVariantGrid" data-testid="language-variant-grid">
+            {languageVariants.map((variant) => (
+              <article key={variant.id} className="languageVariantCard" data-testid="language-variant" dir={variant.direction}>
+                <div>
+                  <strong>{variant.language.toUpperCase()}</strong>
+                  <span>{variant.reviewRequired ? "Review" : "Ready"}</span>
+                </div>
+                <p>{variant.hook}</p>
+                <small>{variant.cta}</small>
+                <button type="button" className="toolButton" onClick={() => applyLanguageVariant(variant)}>
+                  Apply language
+                </button>
+              </article>
+            ))}
+          </div>
+        )}
+
+        {campaignExperiments.length > 0 && (
+          <div className="experimentGrid" data-testid="experiment-grid">
+            {campaignExperiments.map((experiment) => (
+              <article key={experiment.id} className="experimentCard" data-testid="campaign-experiment">
+                <div>
+                  <strong>Variant {experiment.index}</strong>
+                  <span>Master {experiment.masterConceptId.slice(0, 8)}</span>
+                </div>
+                <p>{experiment.hook}</p>
+                <small>{experiment.rationale}</small>
+                <button type="button" className="toolButton" onClick={() => applyCampaignExperiment(experiment)}>
+                  Apply experiment
                 </button>
               </article>
             ))}

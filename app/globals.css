@@ -317,3 +317,10 @@ h2 { font-size:12px; text-transform:uppercase; letter-spacing:.1em; color:var(--
 .variantCard > div strong { font-size:10px; }
 .variantCard > div span,.variantCard small { color:var(--muted); font-size:9px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 @media (max-width:900px){.variantGrid{grid-template-columns:1fr 1fr}}
+
+.languageVariantGrid,.experimentGrid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:7px; }
+.languageVariantCard,.experimentCard { display:flex; flex-direction:column; gap:6px; padding:9px; border:1px solid var(--line); border-radius:10px; background:var(--surface-2); }
+.languageVariantCard > div,.experimentCard > div { display:flex; justify-content:space-between; gap:8px; }
+.languageVariantCard p,.experimentCard p { margin:0; font-size:10px; }
+.languageVariantCard small,.languageVariantCard span,.experimentCard small,.experimentCard span { color:var(--muted); font-size:9px; }
+@media (max-width:900px){.languageVariantGrid,.experimentGrid{grid-template-columns:1fr}}
