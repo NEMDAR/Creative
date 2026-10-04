@@ -5,7 +5,7 @@ import { CAPTION_STYLE_PRESETS, captionCueAtTime, cloneCaptionStylePreset, norma
 import { brandCaptionDefaults, DEFAULT_BRAND_KIT, normalizeBrandKit, type BrandKit } from "../lib/editor/brand-kit";
 import type { CreatorProject, Overlay, OverlayBlendMode, OverlayEasing, OverlayKeyframe, OverlayMaskShape, RatioKey, TextOverlay } from "../lib/editor/types";
 import { listPhaseTwoSnapshots, loadBrandKit, loadPhaseOneDraft, loadPhaseTwoDraft, loadPhaseTwoSnapshot, saveBrandKit, savePhaseTwoDraft, savePhaseTwoSnapshot, type HydratedPhaseTwoState, type PhaseTwoSaveInput, type PhaseTwoSnapshotSummary } from "../lib/editor/storage";
-import { buildSequentialTimeline, createEmptyTimeline, deleteTimelineClip, duplicateTimelineClip, formatTimelineTime, getMaxTransitionDuration, getNextTimelineClip, getTransitionVisualState, isCrossfadeEligible, moveTimelineClip, normalizeClipChroma, removeTimelineRange, resolveTimelineTime, setTimelineClipTransition, setTimelinePlayhead, splitTimelineClip, timelineTimeForClip, trimTimelineClip, updateTimelineClipChroma, updateTimelineClipTransform, type ClipChromaKey, type ClipFitMode, type TimelineClip, type TimelineState, type TransitionType } from "../lib/editor/timeline";
+import { buildSequentialTimeline, createEmptyTimeline, deleteTimelineClip, duplicateTimelineClip, formatTimelineTime, getMaxTransitionDuration, getNextTimelineClip, getTransitionVisualState, isCrossfadeEligible, moveTimelineClip, normalizeClipChroma, normalizeClipColorGrade, removeTimelineRange, resolveTimelineTime, setTimelineClipTransition, setTimelinePlayhead, splitTimelineClip, timelineTimeForClip, trimTimelineClip, updateTimelineClipChroma, updateTimelineClipColorGrade, updateTimelineClipTransform, type ClipChromaKey, type ClipFitMode, type ClipLutPreset, type TimelineClip, type TimelineState, type TransitionType } from "../lib/editor/timeline";
 import { instantiateMarketingTemplate, MARKETING_TEMPLATES, type MarketingTemplateId } from "../lib/editor/templates";
 import { compileEditorCommand, type EditorCommandPlan } from "../lib/editor/command-bar";
 import type { ProviderCapability, ProviderDirectorySnapshot, ProviderArtifact } from "../lib/providers/contracts";
@@ -845,17 +845,41 @@ export default function PhaseOneEditor() {
     };
   }, [media, activeMediaClip, project.ratio, timeline.playhead]);
 
+  function clipColorFilter(clip: TimelineClip | null) {
+    const grade = normalizeClipColorGrade(clip?.colorGrade);
+    const brightness = Math.pow(2, grade.exposure);
+    const filters = [
+      `brightness(${brightness.toFixed(3)})`,
+      `contrast(${grade.contrast.toFixed(3)})`,
+      `saturate(${grade.saturation.toFixed(3)})`,
+    ];
+
+    if (grade.lut === "warm") {
+      filters.push("sepia(0.16)", "saturate(1.08)", "hue-rotate(-7deg)");
+    } else if (grade.lut === "cool") {
+      filters.push("saturate(1.05)", "hue-rotate(8deg)");
+    } else if (grade.lut === "cinematic") {
+      filters.push("contrast(1.08)", "saturate(0.9)", "sepia(0.07)");
+    } else if (grade.lut === "mono") {
+      filters.push("grayscale(1)");
+    }
+
+    return filters.join(" ");
+  }
+
   function clipMediaStyle(
     clip: TimelineClip | null,
     opacity = 1
   ): CSSProperties {
     const transform = clip?.transform;
+    const chroma = normalizeClipChroma(clip?.chroma);
     return {
       opacity,
       objectFit: transform?.fit === "fill" ? "fill" : transform?.fit ?? "cover",
       objectPosition: `${transform?.cropX ?? 50}% ${transform?.cropY ?? 50}%`,
       transform: `rotate(${transform?.rotation ?? 0}deg) scale(${transform?.zoom ?? 1})`,
       transformOrigin: "center",
+      filter: chroma.enabled ? undefined : clipColorFilter(clip),
     };
   }
 
@@ -2786,6 +2810,15 @@ export default function PhaseOneEditor() {
     );
   }
 
+  function updateSelectedClipColorGrade(
+    patch: Partial<TimelineClip["colorGrade"]>
+  ) {
+    if (!selectedClip) return;
+    setTimeline((current) =>
+      updateTimelineClipColorGrade(current, selectedClip.id, patch)
+    );
+  }
+
   function moveMediaItem(id: string, direction: -1 | 1) {
     const index = mediaItems.findIndex((item) => item.id === id);
     const target = index + direction;
@@ -4052,6 +4085,7 @@ export default function PhaseOneEditor() {
     const fit = transform?.fit ?? "cover";
     const zoom = transform?.zoom ?? 1;
     const chroma = normalizeClipChroma(clip?.chroma);
+    const colorFilter = clipColorFilter(clip);
 
     const keyedCanvas = chroma.enabled ? document.createElement("canvas") : null;
     const targetCtx = keyedCanvas?.getContext("2d") ?? ctx;
@@ -4083,6 +4117,7 @@ export default function PhaseOneEditor() {
     const rotation = ((transform?.rotation ?? 0) * Math.PI) / 180;
 
     targetCtx.save();
+    if (!chroma.enabled) targetCtx.filter = colorFilter;
     targetCtx.translate(w / 2, h / 2);
     targetCtx.rotate(rotation);
     targetCtx.drawImage(source, dx - w / 2, dy - h / 2, dw, dh);
@@ -4093,6 +4128,7 @@ export default function PhaseOneEditor() {
       ctx.save();
       ctx.fillStyle = chroma.backgroundColor;
       ctx.fillRect(0, 0, w, h);
+      ctx.filter = colorFilter;
       ctx.drawImage(keyedCanvas, 0, 0, w, h);
       ctx.restore();
     }
@@ -6488,6 +6524,87 @@ export default function PhaseOneEditor() {
                   </button>
                 )}
                 <small>Pixel keying is non-destructive and is applied to preview/export while the source asset remains unchanged.</small>
+              </div>
+              <div className="colorGradePanel" data-testid="color-grade-panel">
+                <div className="clipMeta">
+                  <strong>Color & LUT</strong>
+                  <span>{normalizeClipColorGrade(selectedClip.colorGrade).lut}</span>
+                </div>
+                <label>
+                  Exposure {normalizeClipColorGrade(selectedClip.colorGrade).exposure.toFixed(2)}
+                  <input
+                    aria-label="Clip exposure"
+                    type="range"
+                    min={-2}
+                    max={2}
+                    step={0.05}
+                    value={normalizeClipColorGrade(selectedClip.colorGrade).exposure}
+                    onChange={(e) =>
+                      updateSelectedClipColorGrade({ exposure: Number(e.target.value) })
+                    }
+                  />
+                </label>
+                <label>
+                  Contrast {normalizeClipColorGrade(selectedClip.colorGrade).contrast.toFixed(2)}
+                  <input
+                    aria-label="Clip contrast"
+                    type="range"
+                    min={0.5}
+                    max={1.8}
+                    step={0.05}
+                    value={normalizeClipColorGrade(selectedClip.colorGrade).contrast}
+                    onChange={(e) =>
+                      updateSelectedClipColorGrade({ contrast: Number(e.target.value) })
+                    }
+                  />
+                </label>
+                <label>
+                  Saturation {normalizeClipColorGrade(selectedClip.colorGrade).saturation.toFixed(2)}
+                  <input
+                    aria-label="Clip saturation"
+                    type="range"
+                    min={0}
+                    max={2}
+                    step={0.05}
+                    value={normalizeClipColorGrade(selectedClip.colorGrade).saturation}
+                    onChange={(e) =>
+                      updateSelectedClipColorGrade({ saturation: Number(e.target.value) })
+                    }
+                  />
+                </label>
+                <label>
+                  LUT preset
+                  <select
+                    aria-label="Clip LUT"
+                    value={normalizeClipColorGrade(selectedClip.colorGrade).lut}
+                    onChange={(e) =>
+                      updateSelectedClipColorGrade({
+                        lut: e.target.value as ClipLutPreset,
+                      })
+                    }
+                  >
+                    <option value="none">None</option>
+                    <option value="warm">Warm</option>
+                    <option value="cool">Cool</option>
+                    <option value="cinematic">Cinematic</option>
+                    <option value="mono">Monochrome</option>
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  className="ghost"
+                  onClick={() =>
+                    updateSelectedClipColorGrade({
+                      exposure: 0,
+                      contrast: 1,
+                      saturation: 1,
+                      lut: "none",
+                    })
+                  }
+                >
+                  Reset color
+                </button>
+                <small>Color settings are stored as clip metadata; the original source file is never modified.</small>
               </div>
               {selectedNextClip ? (
                 <div className="transitionInspector" data-testid="transition-inspector">

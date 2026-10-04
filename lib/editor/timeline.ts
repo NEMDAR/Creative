@@ -41,6 +41,40 @@ export function normalizeClipChroma(
   };
 }
 
+export type ClipLutPreset = "none" | "warm" | "cool" | "cinematic" | "mono";
+
+export type ClipColorGrade = {
+  exposure: number;
+  contrast: number;
+  saturation: number;
+  lut: ClipLutPreset;
+};
+
+export const DEFAULT_CLIP_COLOR_GRADE: ClipColorGrade = {
+  exposure: 0,
+  contrast: 1,
+  saturation: 1,
+  lut: "none",
+};
+
+export function normalizeClipColorGrade(
+  grade?: Partial<ClipColorGrade> | null
+): ClipColorGrade {
+  const lut: ClipLutPreset =
+    grade?.lut === "warm" ||
+    grade?.lut === "cool" ||
+    grade?.lut === "cinematic" ||
+    grade?.lut === "mono"
+      ? grade.lut
+      : "none";
+  return {
+    exposure: clamp(grade?.exposure ?? 0, -2, 2),
+    contrast: clamp(grade?.contrast ?? 1, 0.5, 1.8),
+    saturation: clamp(grade?.saturation ?? 1, 0, 2),
+    lut,
+  };
+}
+
 export type ClipTransition = {
   type: Exclude<TransitionType, "none">;
   duration: number;
@@ -58,6 +92,7 @@ export type TimelineClip = {
   transitionOut: ClipTransition | null;
   transform: ClipTransform;
   chroma: ClipChromaKey;
+  colorGrade: ClipColorGrade;
 };
 
 export type TimelineTrack = {
@@ -141,6 +176,7 @@ export function buildSequentialTimeline(
         speed: 1,
       },
       chroma: { ...DEFAULT_CLIP_CHROMA },
+      colorGrade: { ...DEFAULT_CLIP_COLOR_GRADE },
     };
     cursor += duration;
     return clip;
@@ -328,6 +364,26 @@ export function moveTimelineClip(
 
   [clips[index], clips[target]] = [clips[target], clips[index]];
   return reflowTimeline(timeline, clips);
+}
+
+export function updateTimelineClipColorGrade(
+  timeline: TimelineState,
+  clipId: string,
+  patch: Partial<ClipColorGrade>
+): TimelineState {
+  const clips = timeline.tracks[0]?.clips ?? [];
+  const next = clips.map((clip) =>
+    clip.id === clipId
+      ? {
+          ...clip,
+          colorGrade: normalizeClipColorGrade({
+            ...clip.colorGrade,
+            ...patch,
+          }),
+        }
+      : clip
+  );
+  return reflowTimeline(timeline, next);
 }
 
 export function updateTimelineClipChroma(
@@ -619,6 +675,7 @@ function reflowTimeline(
       timelineStart: cursor,
       duration: Math.max(0.1, clip.duration),
       chroma: normalizeClipChroma(clip.chroma),
+      colorGrade: normalizeClipColorGrade(clip.colorGrade),
     };
     cursor += next.duration;
     return next;

@@ -1801,3 +1801,37 @@ test("P6 chroma key replaces keyed pixels non-destructively and persists", async
   await expect(page.getByLabel("Chroma spill")).toHaveValue("0.5");
   await expect(page.getByTestId("chroma-preview")).toBeVisible();
 });
+
+test("P6 color controls and LUT preset are non-destructive and persist", async ({ page }) => {
+  await page.goto("/");
+
+  await page.locator('input[accept="video/*,image/*"]').setInputFiles({
+    name: "grade-source.png",
+    mimeType: "image/png",
+    buffer: PNG_1X1,
+  });
+  await expect(page.getByTestId("timeline-clip")).toHaveCount(1);
+
+  await page.getByLabel("Clip exposure").fill("0.5");
+  await page.getByLabel("Clip contrast").fill("1.2");
+  await page.getByLabel("Clip saturation").fill("0.8");
+  await page.getByLabel("Clip LUT").selectOption("mono");
+
+  const image = page.locator("#creative-image");
+  await expect(image).toHaveCSS("filter", /brightness\(1\.414\)/);
+  await expect(image).toHaveCSS("filter", /contrast\(1\.2/);
+  await expect(image).toHaveCSS("filter", /saturate\(0\.8/);
+  await expect(image).toHaveCSS("filter", /grayscale\(1\)/);
+  await expect(page.locator(".assetCard")).toHaveCount(1);
+  await expect(page.locator(".assetCard strong")).toHaveText("grade-source.png");
+
+  await expect(page.getByTestId("save-state")).toHaveText("Saved", { timeout: 5_000 });
+  await page.reload();
+
+  await expect(page.getByLabel("Clip exposure")).toHaveValue("0.5");
+  await expect(page.getByLabel("Clip contrast")).toHaveValue("1.2");
+  await expect(page.getByLabel("Clip saturation")).toHaveValue("0.8");
+  await expect(page.getByLabel("Clip LUT")).toHaveValue("mono");
+  await expect(page.locator("#creative-image")).toHaveCSS("filter", /grayscale\(1\)/);
+  await expect(page.locator(".assetCard strong")).toHaveText("grade-source.png");
+});
