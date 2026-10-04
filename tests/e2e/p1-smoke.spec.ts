@@ -1334,3 +1334,70 @@ test("P4 generation ledger and provenance persist result lineage and review stat
   await expect(page.getByTestId("provenance-review")).toHaveText("approved");
   await expect(page.getByTestId("provenance-panel")).toContainText("provider-terms");
 });
+
+test("P5 marketing brief produces editable concepts and a scene plan without invented claims", async ({ page }) => {
+  await page.goto("/");
+
+  await page.getByLabel("Brief product").fill("NEMDAR Creator");
+  await page.getByLabel("Brief audience").fill("UAE real estate marketing teams");
+  await page.getByLabel("Brief objective").fill("Generate qualified leads");
+  await page.getByLabel("Brief offer").fill("Book a product demo");
+  await page.getByLabel("Brief CTA").fill("Request a demo");
+  await page.getByLabel("Brief approved claims").fill("AI-assisted creative workflow\nEditable campaign assets");
+
+  await expect(page.getByText("Ready for concepts")).toBeVisible();
+  await page.getByRole("button", { name: "Generate concepts" }).click();
+
+  await expect(page.getByTestId("creative-concept")).toHaveCount(3);
+  const concepts = page.getByTestId("creative-concept");
+  await expect(concepts.nth(0)).toContainText("Problem → Outcome");
+  await expect(concepts.nth(1)).toContainText("Product First");
+  await expect(concepts.nth(2)).toContainText("Offer Momentum");
+  await expect(page.getByTestId("concept-grid")).not.toContainText("ROI");
+  await expect(page.getByTestId("concept-grid")).not.toContainText("guaranteed");
+
+  await page.getByLabel("Problem → Outcome hook").fill("Create campaign assets without starting from zero.");
+  await page.getByLabel("Problem → Outcome CTA").fill("Request your demo");
+  await page.getByRole("button", { name: "Use concept → scene plan" }).first().click();
+
+  await expect(page.getByTestId("storyboard-meta")).toContainText("concept-scene-plan-v1");
+  await expect(page.getByTestId("storyboard-scene").first()).toContainText("Scene 1");
+  await expect(page.getByLabel("Storyboard brief")).toContainText("NEMDAR Creator");
+});
+
+test("P5 marketing brief captures governed campaign context and persists", async ({ page }) => {
+  await page.goto("/");
+
+  const brief = page.getByTestId("marketing-brief");
+  await expect(brief).toContainText("Brief incomplete");
+
+  await page.getByLabel("Brief product").fill("NEMDAR Creator for UAE real-estate marketing teams");
+  await page.getByLabel("Brief audience").fill("Marketing managers and sales teams in UAE property companies");
+  await page.getByLabel("Brief objective").fill("Generate qualified campaign enquiries");
+  await page.getByLabel("Brief offer").fill("Book a product walkthrough");
+  await page.getByLabel("Brief CTA").fill("Book a demo");
+  await page.getByLabel("Brief tone").fill("Premium, direct, modern");
+  await page.getByLabel("Brief approved claims").fill(
+    "AI-assisted creative workflow\nArabic and English campaign support"
+  );
+  await page.getByLabel("Brief prohibited claims").fill(
+    "Guaranteed ROI\nNumber one in the UAE"
+  );
+  await page.getByRole("button", { name: "tiktok", exact: true }).click();
+  await page.getByRole("button", { name: "EN", exact: true }).click();
+
+  await expect(brief).toContainText("Ready for concepts");
+
+
+  await expect(page.getByTestId("save-state")).toHaveText("Saved", { timeout: 5_000 });
+  await page.reload();
+
+  await expect(page.getByLabel("Brief product")).toHaveValue("NEMDAR Creator for UAE real-estate marketing teams");
+  await expect(page.getByLabel("Brief audience")).toHaveValue("Marketing managers and sales teams in UAE property companies");
+  await expect(page.getByLabel("Brief CTA")).toHaveValue("Book a demo");
+  await expect(page.getByRole("button", { name: "tiktok", exact: true })).toHaveClass(/active/);
+  await expect(page.getByRole("button", { name: "EN", exact: true })).toHaveClass(/active/);
+  await expect(page.getByLabel("Brief approved claims")).toContainText("AI-assisted creative workflow");
+  await expect(page.getByLabel("Brief prohibited claims")).toContainText("Guaranteed ROI");
+  await expect(page.getByTestId("marketing-brief")).toContainText("Ready for concepts");
+});

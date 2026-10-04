@@ -11,6 +11,8 @@ import { compileEditorCommand, type EditorCommandPlan } from "../lib/editor/comm
 import type { ProviderCapability, ProviderDirectorySnapshot, ProviderArtifact } from "../lib/providers/contracts";
 import { withDefaultProvenance, type AssetGenerationMetadata, type AssetReviewStatus, type GenerationRecord } from "../lib/editor/assets";
 import type { BrollOption, StoryboardAssetNeed, StoryboardPlan, StoryboardScene } from "../lib/editor/storyboard";
+import { buildCreativeConcepts, type CreativeConcept } from "../lib/marketing/brief";
+import { EMPTY_MARKETING_BRIEF, normalizeMarketingBrief, validateMarketingBrief, type MarketingBrief, type MarketingLanguage, type MarketingPlatform } from "../lib/editor/marketing";
 import type { ServerRenderManifest } from "../lib/render/server-types";
 
 const RATIOS: Record<RatioKey, { w: number; h: number }> = {
@@ -19,6 +21,21 @@ const RATIOS: Record<RatioKey, { w: number; h: number }> = {
   "4:5": { w: 4, h: 5 },
   "16:9": { w: 16, h: 9 },
 };
+
+const MARKETING_PLATFORMS: Array<{ id: MarketingPlatform; label: string }> = [
+  { id: "instagram-reels", label: "Instagram Reels" },
+  { id: "instagram-feed", label: "Instagram Feed" },
+  { id: "tiktok", label: "TikTok" },
+  { id: "youtube-shorts", label: "YouTube Shorts" },
+  { id: "linkedin", label: "LinkedIn" },
+  { id: "x", label: "X" },
+  { id: "snapchat", label: "Snapchat" },
+];
+
+const MARKETING_LANGUAGES: Array<{ id: MarketingLanguage; label: string }> = [
+  { id: "ar", label: "Arabic" },
+  { id: "en", label: "English" },
+];
 
 const initialProject: CreatorProject = {
   schemaVersion: 1,
@@ -389,6 +406,9 @@ export default function PhaseOneEditor() {
   const [storyboardState, setStoryboardState] = useState<"idle" | "generating" | "error">("idle");
   const [storyboardError, setStoryboardError] = useState<string | null>(null);
   const [generationLedger, setGenerationLedger] = useState<GenerationRecord[]>([]);
+  const [marketingBrief, setMarketingBrief] = useState<MarketingBrief>(() => normalizeMarketingBrief(EMPTY_MARKETING_BRIEF));
+  const [creativeConcepts, setCreativeConcepts] = useState<CreativeConcept[]>([]);
+  const [selectedConceptId, setSelectedConceptId] = useState<string | null>(null);
   const [captionLanguage, setCaptionLanguage] = useState<CaptionLanguage>("auto");
   const [captionState, setCaptionState] = useState<"idle" | "generating" | "ready" | "error">("idle");
   const [captionError, setCaptionError] = useState<string | null>(null);
@@ -572,6 +592,11 @@ export default function PhaseOneEditor() {
       return buildSequentialTimeline(inputs, current.playhead);
     });
   }, [mediaItems, project.trimStart, project.trimEnd]);
+
+  const marketingBriefValidation = useMemo(
+    () => validateMarketingBrief(marketingBrief),
+    [marketingBrief]
+  );
 
   const selected = useMemo(
     () => project.overlays.find((overlay) => overlay.id === selectedId) ?? null,
@@ -963,6 +988,7 @@ export default function PhaseOneEditor() {
     setStoryboard(null);
     setStoryboardBrief("");
     setGenerationLedger([]);
+    setMarketingBrief(normalizeMarketingBrief(EMPTY_MARKETING_BRIEF));
     setCaptionLanguage("auto");
     setCaptionState("idle");
     setSelectedCaptionId(null);
@@ -992,6 +1018,7 @@ export default function PhaseOneEditor() {
           brandKit,
           storyboard: null,
           generationLedger: [],
+          marketingBrief: normalizeMarketingBrief(EMPTY_MARKETING_BRIEF),
           timelineZoom: 1,
           snapEnabled: true,
           selectedClipId: null,
@@ -1461,6 +1488,96 @@ export default function PhaseOneEditor() {
         error instanceof Error ? error.message : "Unable to generate voiceover."
       );
     }
+  }
+
+  function toggleBriefPlatform(platform: MarketingPlatform) {
+    updateMarketingBrief({
+      platforms: marketingBrief.platforms.includes(platform)
+        ? marketingBrief.platforms.filter((item) => item !== platform)
+        : [...marketingBrief.platforms, platform],
+    });
+  }
+
+  function toggleBriefLanguage(language: MarketingLanguage) {
+    updateMarketingBrief({
+      languages: marketingBrief.languages.includes(language)
+        ? marketingBrief.languages.filter((item) => item !== language)
+        : [...marketingBrief.languages, language],
+    });
+  }
+
+  function generateCreativeConceptsFromBrief() {
+    const validation = validateMarketingBrief(marketingBrief);
+    if (!validation.ready) return;
+    const concepts = buildCreativeConcepts(marketingBrief);
+    setCreativeConcepts(concepts);
+    setSelectedConceptId(concepts[0]?.id ?? null);
+  }
+
+  function sendConceptToStoryboard(concept: CreativeConcept) {
+    setSelectedConceptId(concept.id);
+    setStoryboardBrief(concept.script);
+    setStoryboard({
+      provider: "nemdar-marketing-studio",
+      model: "concept-scene-plan-v1",
+      brief: concept.script,
+      generatedAt: Date.now(),
+      scenes: concept.scenes.map((scene) => ({
+        id: `marketing-scene-${scene.order}-${crypto.randomUUID()}`,
+        order: scene.order,
+        title: `Scene ${scene.order}`,
+        narration: scene.narration,
+        visualPrompt: scene.visualPrompt,
+        duration: scene.duration,
+        assetNeed: scene.order === 1 ? "generate-video" : "b-roll",
+        broll: [],
+      })),
+    });
+  }
+
+  function updateMarketingBrief(patch: Partial<MarketingBrief>) {
+    setMarketingBrief((current) =>
+      normalizeMarketingBrief({
+        ...current,
+        ...patch,
+        updatedAt: Date.now(),
+      })
+    );
+  }
+
+  function toggleMarketingPlatform(platform: MarketingPlatform) {
+    setMarketingBrief((current) => {
+      const has = current.platforms.includes(platform);
+      const platforms = has
+        ? current.platforms.filter((item) => item !== platform)
+        : [...current.platforms, platform];
+      return normalizeMarketingBrief({
+        ...current,
+        platforms,
+        updatedAt: Date.now(),
+      });
+    });
+  }
+
+  function toggleMarketingLanguage(language: MarketingLanguage) {
+    setMarketingBrief((current) => {
+      const has = current.languages.includes(language);
+      const languages = has
+        ? current.languages.filter((item) => item !== language)
+        : [...current.languages, language];
+      return normalizeMarketingBrief({
+        ...current,
+        languages,
+        updatedAt: Date.now(),
+      });
+    });
+  }
+
+  function splitBriefLines(value: string) {
+    return value
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
   }
 
   async function generateStoryboardPlan() {
@@ -2545,6 +2662,7 @@ export default function PhaseOneEditor() {
       brandKit,
       storyboard,
       generationLedger,
+      marketingBrief,
       timelineZoom,
       snapEnabled,
       selectedClipId,
@@ -2587,6 +2705,7 @@ export default function PhaseOneEditor() {
     setStoryboard(state.storyboard ?? null);
     setStoryboardBrief(state.storyboard?.brief ?? "");
     setGenerationLedger(state.generationLedger ?? []);
+    setMarketingBrief(normalizeMarketingBrief(state.marketingBrief));
     setCaptionLanguage(state.captions?.requestedLanguage ?? "auto");
     setCaptionState(state.captions?.cues.length ? "ready" : "idle");
     setSelectedCaptionId(state.captions?.cues[0]?.id ?? null);
@@ -2702,6 +2821,7 @@ export default function PhaseOneEditor() {
       brandKit: normalizeBrandKit(state.brandKit),
       storyboard: state.storyboard ?? null,
       generationLedger: state.generationLedger ?? [],
+      marketingBrief: normalizeMarketingBrief(state.marketingBrief),
       timelineZoom: state.timelineZoom,
       snapEnabled: state.snapEnabled,
       selectedClipId: state.selectedClipId,
@@ -2773,7 +2893,8 @@ export default function PhaseOneEditor() {
       audioTrack !== null ||
       captions !== null ||
       storyboard !== null ||
-      generationLedger.length > 0;
+      generationLedger.length > 0 ||
+      Boolean(marketingBrief.product || marketingBrief.audience || marketingBrief.objective || marketingBrief.cta);
     if (!hasMeaningfulState) return;
 
     if (autosaveTimerRef.current !== null) {
@@ -2819,6 +2940,7 @@ export default function PhaseOneEditor() {
     brandKit,
     storyboard,
     generationLedger,
+    marketingBrief,
     timelineZoom,
     snapEnabled,
   ]);
@@ -3503,6 +3625,61 @@ export default function PhaseOneEditor() {
             <button type="button" className="primary" onClick={applyEditorCommandPlan}>
               Apply actions
             </button>
+          </div>
+        )}
+      </section>
+
+      <section className="marketingStudio" data-testid="marketing-brief">
+        <div className="marketingStudioHeader">
+          <div>
+            <span className="eyebrow">P5 Marketing Studio</span>
+            <strong>Brief → Concepts → Script → Scene plan</strong>
+          </div>
+          <span className={validateMarketingBrief(marketingBrief).ready ? "briefReady" : "briefDraft"}>
+            {validateMarketingBrief(marketingBrief).ready ? "Ready for concepts" : "Brief incomplete"}
+          </span>
+        </div>
+        <div className="marketingBriefGrid">
+          <label>Product<input aria-label="Brief product" value={marketingBrief.product} onChange={(e)=>updateMarketingBrief({product:e.target.value})}/></label>
+          <label>Audience<input aria-label="Brief audience" value={marketingBrief.audience} onChange={(e)=>updateMarketingBrief({audience:e.target.value})}/></label>
+          <label>Objective<input aria-label="Brief objective" value={marketingBrief.objective} onChange={(e)=>updateMarketingBrief({objective:e.target.value})}/></label>
+          <label>Offer<input aria-label="Brief offer" value={marketingBrief.offer} onChange={(e)=>updateMarketingBrief({offer:e.target.value})}/></label>
+          <label>Tone<input aria-label="Brief tone" value={marketingBrief.tone} onChange={(e)=>updateMarketingBrief({tone:e.target.value})}/></label>
+          <label>CTA<input aria-label="Brief CTA" value={marketingBrief.cta} onChange={(e)=>updateMarketingBrief({cta:e.target.value})}/></label>
+        </div>
+        <div className="briefChoiceRow">
+          {(["instagram-reels","instagram-feed","tiktok","youtube-shorts","linkedin","x","snapchat"] as MarketingPlatform[]).map((platform)=>(
+            <button type="button" key={platform} className={marketingBrief.platforms.includes(platform)?"active":""} onClick={()=>toggleBriefPlatform(platform)}>{platform}</button>
+          ))}
+        </div>
+        <div className="briefChoiceRow">
+          {(["ar","en"] as MarketingLanguage[]).map((language)=>(
+            <button type="button" key={language} className={marketingBrief.languages.includes(language)?"active":""} onClick={()=>toggleBriefLanguage(language)}>{language.toUpperCase()}</button>
+          ))}
+        </div>
+        <div className="marketingBriefGrid marketingBriefTextareas">
+          <label>Approved claims<textarea aria-label="Brief approved claims" value={marketingBrief.requiredClaims.join("\n")} onChange={(e)=>updateMarketingBrief({requiredClaims:e.target.value.split("\n")})}/></label>
+          <label>Never claim<textarea aria-label="Brief prohibited claims" value={marketingBrief.prohibitedClaims.join("\n")} onChange={(e)=>updateMarketingBrief({prohibitedClaims:e.target.value.split("\n")})}/></label>
+          <label>Constraints<textarea aria-label="Brief constraints" value={marketingBrief.constraints} onChange={(e)=>updateMarketingBrief({constraints:e.target.value})}/></label>
+        </div>
+        {!validateMarketingBrief(marketingBrief).ready && (
+          <p className="hint" data-testid="brief-missing">Missing: {validateMarketingBrief(marketingBrief).missing.join(", ")}</p>
+        )}
+        <button type="button" className="primary" disabled={!validateMarketingBrief(marketingBrief).ready} onClick={generateCreativeConceptsFromBrief}>Generate concepts</button>
+        {creativeConcepts.length > 0 && (
+          <div className="conceptGrid" data-testid="concept-grid">
+            {creativeConcepts.map((concept)=>(
+              <article key={concept.id} className={selectedConceptId===concept.id?"conceptCard selected":"conceptCard"} data-testid="creative-concept">
+                <strong>{concept.title}</strong>
+                <span>{concept.hook}</span>
+                <p>{concept.angle}</p>
+                <small>{concept.rationale}</small>
+                <label>Hook<input aria-label={`${concept.title} hook`} value={concept.hook} onChange={(e)=>setCreativeConcepts((items)=>items.map((item)=>item.id===concept.id?{...item,hook:e.target.value}:item))}/></label>
+                <label>CTA<input aria-label={`${concept.title} CTA`} value={concept.cta} onChange={(e)=>setCreativeConcepts((items)=>items.map((item)=>item.id===concept.id?{...item,cta:e.target.value}:item))}/></label>
+                <label>Script<textarea aria-label={`${concept.title} script`} value={concept.script} onChange={(e)=>setCreativeConcepts((items)=>items.map((item)=>item.id===concept.id?{...item,script:e.target.value}:item))}/></label>
+                <button type="button" className="toolButton" onClick={()=>sendConceptToStoryboard(concept)}>Use concept → scene plan</button>
+              </article>
+            ))}
           </div>
         )}
       </section>

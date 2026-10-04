@@ -278,3 +278,33 @@ h2 { font-size:12px; text-transform:uppercase; letter-spacing:.1em; color:var(--
 .provenancePanel > small { color:var(--muted); font-size:9px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .provenanceActions { display:grid; grid-template-columns:1fr 1fr 1fr; gap:5px; }
 .provenanceActions button { border:1px solid var(--line); border-radius:7px; padding:6px; background:var(--surface-2); color:var(--text); font-size:9px; }
+
+.marketingStudio { margin:10px 12px 0; padding:12px; border:1px solid rgba(22,139,241,.22); border-radius:14px; background:linear-gradient(135deg,rgba(22,139,241,.055),rgba(255,255,255,.015)); display:flex; flex-direction:column; gap:10px; }
+.marketingStudioHeader { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+.marketingStudioHeader > div { display:flex; flex-direction:column; gap:2px; }
+.briefReady,.briefDraft { padding:5px 8px; border-radius:999px; font-size:9px; border:1px solid var(--line); }
+.briefReady { border-color:rgba(104,211,145,.35); }
+.marketingBriefGrid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }
+.marketingBriefTextareas textarea { min-height:70px; resize:vertical; }
+.briefChoiceRow { display:flex; flex-wrap:wrap; gap:5px; }
+.briefChoiceRow button { border:1px solid var(--line); border-radius:999px; padding:5px 8px; background:var(--surface-2); color:var(--muted); font-size:9px; }
+.briefChoiceRow button.active { border-color:rgba(22,139,241,.55); color:var(--text); background:rgba(22,139,241,.12); }
+.conceptGrid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }
+.conceptCard { display:flex; flex-direction:column; gap:7px; padding:10px; border:1px solid var(--line); border-radius:11px; background:var(--surface-2); }
+.conceptCard.selected { border-color:rgba(22,139,241,.5); }
+.conceptCard > span,.conceptCard > p,.conceptCard > small { font-size:9px; color:var(--muted); margin:0; }
+.conceptCard textarea { min-height:70px; resize:vertical; }
+@media (max-width:900px){.marketingBriefGrid,.conceptGrid{grid-template-columns:1fr}.marketingStudio{margin:8px}}
+
+.marketingBriefPanel { display:flex; flex-direction:column; gap:9px; padding:10px; border:1px solid rgba(22,139,241,.22); border-radius:11px; background:rgba(22,139,241,.035); }
+.marketingBriefPanel textarea { min-height:64px; resize:vertical; }
+.briefReadiness { display:flex; flex-direction:column; gap:3px; padding:8px; border-radius:9px; background:var(--surface-2); border:1px solid var(--line); }
+.briefReadiness strong { font-size:11px; }
+.briefReadiness span { color:var(--muted); font-size:9px; line-height:1.35; }
+.fieldLabel { display:block; margin-bottom:5px; color:var(--muted); font-size:9px; }
+.briefChipGrid { display:grid; grid-template-columns:1fr 1fr; gap:5px; }
+.briefLanguages { grid-template-columns:1fr 1fr; }
+.briefChip { display:flex !important; flex-direction:row !important; align-items:center; gap:6px; padding:6px; border:1px solid var(--line); border-radius:8px; background:var(--surface-2); font-size:9px; }
+.briefChip input { width:auto !important; }
+.briefWarnings { display:flex; flex-direction:column; gap:3px; padding:7px; border:1px solid rgba(245,208,111,.25); border-radius:8px; background:rgba(245,208,111,.045); }
+.briefWarnings small { color:#e7cf91; font-size:9px; }
