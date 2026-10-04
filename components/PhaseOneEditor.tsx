@@ -537,8 +537,8 @@ async function rasterizeOverlayAsset(
   return { blob: await canvasPngBlob(canvas), width, height };
 }
 
-export default function PhaseOneEditor() {
-  const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("editor");
+export default function PhaseOneEditor({ initialWorkspace = "editor" }: { initialWorkspace?: WorkspaceView }) {
+  const [workspaceView, setWorkspaceView] = useState<WorkspaceView>(initialWorkspace);
   const [editorTool, setEditorTool] = useState<EditorTool>("media");
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("properties");
   const [project, setProject] = useState<CreatorProject>(initialProject);
