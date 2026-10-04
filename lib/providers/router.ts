@@ -1,3 +1,4 @@
+import { routeProvider, type RoutingDecision, type RoutingPolicy } from "../operations/control-plane";
 import type {
   ImageEditInput,
   ImageGenerateInput,
@@ -51,6 +52,22 @@ export class ProviderRouter {
     }
     this.selections[capability] = providerId;
     return this.snapshot();
+  }
+
+  route(capability: ProviderCapability, policy: RoutingPolicy): RoutingDecision {
+    const candidates = Array.from(this.adapters.values())
+      .filter((adapter) => adapter.descriptor.capabilities.includes(capability))
+      .map((adapter) => ({
+        id: adapter.descriptor.id,
+        model: adapter.descriptor.models[capability]?.[0] ?? "default",
+        quality: adapter.descriptor.routing?.quality ?? 50,
+        latencyMs: adapter.descriptor.routing?.latencyMs ?? 5_000,
+        costUsd: adapter.descriptor.routing?.estimatedCostUsd[capability] ?? 0,
+        configured: adapter.descriptor.configured && supports(adapter, capability),
+      }));
+    const decision = routeProvider(candidates, policy);
+    this.select(capability, decision.provider);
+    return decision;
   }
 
   selected(capability: ProviderCapability) {

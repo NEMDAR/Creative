@@ -19,6 +19,10 @@ export function createMockProvider(config: MockProviderConfig): ProviderAdapter 
   const imageModel = `mock-image-${config.tier}`;
   const videoModel = `mock-video-${config.tier}`;
   const voiceModel = `mock-voice-${config.tier}`;
+  const costs =
+    config.tier === "fast"
+      ? { image: 0.01, video: 0.04, voice: 0.005 }
+      : { image: 0.04, video: 0.14, voice: 0.02 };
 
   return {
     descriptor: {
@@ -31,10 +35,13 @@ export function createMockProvider(config: MockProviderConfig): ProviderAdapter 
         video: [videoModel],
         voice: [voiceModel],
       },
+      routing: config.tier === "fast"
+        ? { quality: 78, latencyMs: 900, estimatedCostUsd: { image: 0.01, video: 0.04, voice: 0.005 } }
+        : { quality: 96, latencyMs: 3200, estimatedCostUsd: { image: 0.04, video: 0.14, voice: 0.02 } },
     },
     image: {
       generate: (input) =>
-        job(config.id, imageModel, "image", input, () => ({
+        job(config.id, imageModel, "image", input, costs.image, () => ({
           url: mockSvgDataUrl(input.prompt, config.tier),
           mimeType: "image/svg+xml",
           provider: config.id,
@@ -42,7 +49,7 @@ export function createMockProvider(config: MockProviderConfig): ProviderAdapter 
           metadata: { mock: true, tier: config.tier, operation: "generate" },
         })),
       edit: (input) =>
-        job(config.id, imageModel, "image", input, () => ({
+        job(config.id, imageModel, "image", input, costs.image, () => ({
           url: input.imageUrl,
           mimeType: "image/*",
           provider: config.id,
@@ -52,7 +59,7 @@ export function createMockProvider(config: MockProviderConfig): ProviderAdapter 
     },
     video: {
       generate: (input) =>
-        job(config.id, videoModel, "video", input, () => ({
+        job(config.id, videoModel, "video", input, costs.video, () => ({
           url: mockWebmDataUrl(),
           mimeType: "video/webm",
           provider: config.id,
@@ -66,7 +73,7 @@ export function createMockProvider(config: MockProviderConfig): ProviderAdapter 
     },
     voice: {
       synthesize: (input) =>
-        job(config.id, voiceModel, "voice", input, () => ({
+        job(config.id, voiceModel, "voice", input, costs.voice, () => ({
           url: mockSilentWavDataUrl(),
           mimeType: "audio/wav",
           provider: config.id,
@@ -87,6 +94,7 @@ function job<TInput>(
   model: string,
   capability: ProviderCapability,
   input: TInput,
+  estimatedCost: number,
   run: () => ProviderArtifact
 ): ProviderJob<TInput, ProviderArtifact> {
   return {
@@ -94,7 +102,7 @@ function job<TInput>(
     model,
     capability,
     input,
-    estimatedCost: 0,
+    estimatedCost,
     async run() {
       await Promise.resolve();
       return run();

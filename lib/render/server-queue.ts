@@ -271,6 +271,7 @@ export async function kickRenderJob(jobId: string) {
           progress,
           stage,
           workerId,
+          attempts: attempt,
         });
       },
     });
@@ -282,6 +283,7 @@ export async function kickRenderJob(jobId: string) {
       outputUrl: `/api/render/jobs/${jobId}/output`,
       completedAt: Date.now(),
       workerId,
+      attempts: attempt,
       error: undefined,
     });
   } catch (error) {
@@ -295,6 +297,7 @@ export async function kickRenderJob(jobId: string) {
         progress: 0,
         stage: `Retry queued · attempt ${attempt + 1}/${job.maxAttempts}`,
         workerId: undefined,
+        attempts: attempt,
         error: message,
       }).catch(() => undefined);
     } else {
@@ -303,6 +306,7 @@ export async function kickRenderJob(jobId: string) {
         stage: "Failed",
         completedAt: Date.now(),
         workerId,
+        attempts: attempt,
         error: message,
       }).catch(() => undefined);
     }

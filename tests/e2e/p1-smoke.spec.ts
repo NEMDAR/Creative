@@ -2431,10 +2431,6 @@ test("P7 render workers expose priority attempts retry and queue observability",
   expect(queuePayload.queue.maxConcurrency).toBeGreaterThanOrEqual(1);
   expect(queuePayload.jobs.some((job: any) => job.jobId === success.jobId)).toBeTruthy();
 
-  const badManifest = {
-    ...manifest,
-    output: { ...manifest.output, fps: 0 },
-  };
   const badResponse = await request.post("/api/render/jobs", {
     multipart: {
       manifest: JSON.stringify(manifest),
@@ -2471,4 +2467,181 @@ test("P7 render workers expose priority attempts retry and queue observability",
 
   const finalFailed = await (await request.get(`/api/render/jobs/${bad.jobId}`)).json();
   expect(finalFailed.attempts).toBe(2);
+});
+
+test("P7 control plane routes providers enforces budgets imports analytics learns and audits roles", async ({ request }) => {
+  const routed = await request.post("/api/ops/control", { data: {
+    action:"route", actor:"qa",
+    policy:"cost",
+    profiles:[
+      {id:"quality-provider",model:"q1",quality:95,latencyMs:9000,costUsd:0.12,configured:true},
+      {id:"fast-provider",model:"f1",quality:80,latencyMs:1500,costUsd:0.03,configured:true},
+      {id:"disabled",model:"x1",quality:100,latencyMs:1,costUsd:0.001,configured:false},
+    ],
+  }});
+  expect(routed.ok()).toBeTruthy();
+  const routing = await routed.json();
+  expect(routing.provider).toBe("fast-provider");
+  expect(routing.reason).toContain("cost policy");
+
+  const blocked = await request.post("/api/ops/control", { data: {
+    action:"budget", actor:"qa",
+    policy:{workspaceLimitUsd:10,projectLimitUsd:5,warningPercent:80,mode:"block"},
+    usage:{workspaceSpentUsd:4,projectSpentUsd:4.8,estimatedNextUsd:0.5},
+  }});
+  expect(blocked.status()).toBe(402);
+  expect((await blocked.json()).allowed).toBe(false);
+
+  const imported = await request.post("/api/ops/control", { data: {
+    action:"import_metrics", actor:"qa",
+    rows:[
+      {variantId:"variant-a",impressions:1000,clicks:100,leads:10,spendUsd:50,conversions:8},
+      {variantId:"variant-b",impressions:1000,clicks:120,leads:12,spendUsd:60,conversions:18},
+    ],
+  }});
+  expect(imported.ok()).toBeTruthy();
+  const analytics = await imported.json();
+  expect(analytics.rows[0].ctr).toBeCloseTo(0.1);
+  expect(analytics.learning.winnerVariantId).toBe("variant-b");
+  expect(analytics.learning.autoApplied).toBe(false);
+  expect(analytics.learning.insights.join(" ")).toContain("not a guaranteed future outcome");
+
+  const denied = await request.post("/api/ops/control", { data: {
+    action:"authorize",actor:"viewer-1",role:"viewer",permission:"publish",
+  }});
+  expect(denied.status()).toBe(403);
+  const allowed = await request.post("/api/ops/control", { data: {
+    action:"authorize",actor:"admin-1",role:"admin",permission:"publish",
+  }});
+  expect(allowed.ok()).toBeTruthy();
+
+  const snapshot = await request.get("/api/ops/control");
+  expect(snapshot.ok()).toBeTruthy();
+  const control = await snapshot.json();
+  expect(control.metrics).toHaveLength(2);
+  expect(control.learning.winnerVariantId).toBe("variant-b");
+  expect(control.audit.some((entry:any)=>entry.action==="provider_route")).toBeTruthy();
+  expect(control.audit.some((entry:any)=>entry.action==="budget_check")).toBeTruthy();
+  expect(control.audit.some((entry:any)=>entry.action==="analytics_import")).toBeTruthy();
+  expect(control.audit.filter((entry:any)=>entry.action==="authorization").length).toBeGreaterThanOrEqual(2);
+});
+
+test("P7 generation endpoint applies explicit provider routing policy and returns decision provenance", async ({ request }) => {
+  const qualityResponse = await request.post("/api/generate/image", { data: {
+    prompt:"premium product hero", aspectRatio:"1:1", routingPolicy:"quality",
+  }});
+  expect(qualityResponse.ok()).toBeTruthy();
+  const quality = await qualityResponse.json();
+  expect(quality.artifact.provider).toBe("mock-quality");
+  expect(quality.routingDecision.provider).toBe("mock-quality");
+  expect(quality.routingDecision.reason).toContain("quality policy");
+
+  const costResponse = await request.post("/api/generate/image", { data: {
+    prompt:"fast social variant", aspectRatio:"1:1", routingPolicy:"cost",
+  }});
+  expect(costResponse.ok()).toBeTruthy();
+  const cost = await costResponse.json();
+  expect(cost.artifact.provider).toBe("mock-fast");
+  expect(cost.routingDecision.provider).toBe("mock-fast");
+  expect(cost.routingDecision.reason).toContain("cost policy");
+});
+
+test("P7 generation applies provider policy budget gates permissions and durable audit", async ({ request }) => {
+  const adminBudget = await request.post("/api/ops/control", {
+    data: {
+      action: "set_budget",
+      actor: "admin-e2e",
+      role: "admin",
+      policy: {
+        workspaceLimitUsd: 0.02,
+        projectLimitUsd: 0.02,
+        warningPercent: 50,
+        mode: "block",
+      },
+    },
+  });
+  expect(adminBudget.ok()).toBeTruthy();
+
+  const reset = await request.post("/api/ops/control", {
+    data: { action: "reset_budget_usage", actor: "admin-e2e", role: "admin" },
+  });
+  expect(reset.ok()).toBeTruthy();
+
+  const viewerDenied = await request.post("/api/generate/image", {
+    headers: { "x-nemdar-role": "viewer", "x-nemdar-actor": "viewer-e2e" },
+    data: {
+      prompt: "viewer should not generate",
+      routingPolicy: "cost",
+      projectId: "budget-project",
+    },
+  });
+  expect(viewerDenied.status()).toBe(403);
+
+  for (let index = 0; index < 2; index += 1) {
+    const generated = await request.post("/api/generate/image", {
+      headers: { "x-nemdar-role": "creator", "x-nemdar-actor": "creator-e2e" },
+      data: {
+        prompt: `budgeted creative ${index + 1}`,
+        routingPolicy: "cost",
+        projectId: "budget-project",
+      },
+    });
+    expect(generated.ok()).toBeTruthy();
+    const payload = await generated.json();
+    expect(payload.routingDecision.provider).toBe("mock-fast");
+    expect(payload.routingDecision.policy).toBe("cost");
+    expect(payload.routingDecision.reason).toContain("cost policy");
+    expect(payload.estimatedCost).toBeCloseTo(0.01);
+  }
+
+  const blocked = await request.post("/api/generate/image", {
+    headers: { "x-nemdar-role": "creator", "x-nemdar-actor": "creator-e2e" },
+    data: {
+      prompt: "this should exceed the project budget",
+      routingPolicy: "cost",
+      projectId: "budget-project",
+    },
+  });
+  expect(blocked.status()).toBe(402);
+  const blockedPayload = await blocked.json();
+  expect(blockedPayload.budget.allowed).toBe(false);
+
+  const publishDenied = await request.post("/api/publishing/handoff", {
+    headers: { "x-nemdar-role": "viewer", "x-nemdar-actor": "viewer-e2e" },
+    data: {},
+  });
+  expect(publishDenied.status()).toBe(403);
+
+  const snapshot = await request.get("/api/ops/control");
+  const ops = await snapshot.json();
+  expect(ops.budget.workspaceSpentUsd).toBeCloseTo(0.02);
+  expect(ops.budget.projectSpentUsd["budget-project"]).toBeCloseTo(0.02);
+  expect(ops.audit.some((entry: any) => entry.action === "generation_provider_route")).toBeTruthy();
+  expect(ops.audit.some((entry: any) => entry.action === "generation_budget_check")).toBeTruthy();
+  expect(ops.audit.some((entry: any) => entry.action === "generation_cost_recorded")).toBeTruthy();
+  expect(
+    ops.audit.some(
+      (entry: any) =>
+        entry.action === "authorization" &&
+        entry.actor === "viewer-e2e" &&
+        entry.allowed === false
+    )
+  ).toBeTruthy();
+
+  await request.post("/api/ops/control", {
+    data: {
+      action: "set_budget",
+      actor: "admin-e2e",
+      role: "admin",
+      policy: {
+        workspaceLimitUsd: 1000,
+        projectLimitUsd: 250,
+        warningPercent: 80,
+        mode: "warn",
+      },
+    },
+  });
+  await request.post("/api/ops/control", {
+    data: { action: "reset_budget_usage", actor: "admin-e2e", role: "admin" },
+  });
 });

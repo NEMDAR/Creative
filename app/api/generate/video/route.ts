@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
 import { getProviderRouter } from "../../../../lib/providers/runtime";
+import {
+  finalizeGenerationCost,
+  guardGeneration,
+} from "../../../../lib/operations/generation-guard";
 
 export const runtime = "nodejs";
 
@@ -10,6 +14,8 @@ export async function POST(request: Request) {
       imageUrl?: string;
       durationSeconds?: number;
       aspectRatio?: string;
+      routingPolicy?: "quality" | "latency" | "cost" | "balanced";
+      projectId?: string;
     };
 
     const prompt = body.prompt?.trim();
@@ -17,13 +23,39 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "prompt is required." }, { status: 400 });
     }
 
-    const job = getProviderRouter().generateVideo({
+    const router = getProviderRouter();
+    const routingDecision = body.routingPolicy
+      ? router.route("video", body.routingPolicy)
+      : null;
+    const job = router.generateVideo({
       prompt,
       imageUrl: body.imageUrl,
       durationSeconds: body.durationSeconds,
       aspectRatio: body.aspectRatio,
     });
+
+    const guard = await guardGeneration(request, {
+      projectId: body.projectId,
+      estimatedCostUsd: job.estimatedCost ?? 0,
+      routingDecision,
+      capability: "video",
+    });
+    if (!guard.ok) {
+      return NextResponse.json(
+        { error: guard.error, budget: guard.budget ?? null, routingDecision },
+        { status: guard.status }
+      );
+    }
+
     const artifact = await job.run();
+    await finalizeGenerationCost({
+      projectId: guard.projectId,
+      estimatedCostUsd: job.estimatedCost ?? 0,
+      capability: "video",
+      provider: artifact.provider,
+      model: artifact.model,
+      routingDecision,
+    });
 
     return NextResponse.json({
       artifact,
@@ -31,6 +63,8 @@ export async function POST(request: Request) {
       sourceMode: body.imageUrl ? "image-to-video" : "text-to-video",
       estimatedCost: job.estimatedCost ?? null,
       createdAt: Date.now(),
+      routingDecision,
+      budget: guard.budget,
     });
   } catch (error) {
     return NextResponse.json(

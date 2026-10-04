@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
 import { getProviderRouter } from "../../../../../lib/providers/runtime";
+import {
+  finalizeGenerationCost,
+  guardGeneration,
+} from "../../../../../lib/operations/generation-guard";
 
 export const runtime = "nodejs";
 
@@ -10,6 +14,8 @@ export async function POST(request: Request) {
       imageUrl?: string;
       aspectRatio?: string;
       operation?: "edit" | "background" | "outpaint";
+      routingPolicy?: "quality" | "latency" | "cost" | "balanced";
+      projectId?: string;
     };
 
     const prompt = body.prompt?.trim();
@@ -20,12 +26,38 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "imageUrl is required." }, { status: 400 });
     }
 
-    const job = getProviderRouter().editImage({
+    const router = getProviderRouter();
+    const routingDecision = body.routingPolicy
+      ? router.route("image", body.routingPolicy)
+      : null;
+    const job = router.editImage({
       prompt,
       imageUrl: body.imageUrl,
       aspectRatio: body.aspectRatio,
     });
+
+    const guard = await guardGeneration(request, {
+      projectId: body.projectId,
+      estimatedCostUsd: job.estimatedCost ?? 0,
+      routingDecision,
+      capability: "image",
+    });
+    if (!guard.ok) {
+      return NextResponse.json(
+        { error: guard.error, budget: guard.budget ?? null, routingDecision },
+        { status: guard.status }
+      );
+    }
+
     const artifact = await job.run();
+    await finalizeGenerationCost({
+      projectId: guard.projectId,
+      estimatedCostUsd: job.estimatedCost ?? 0,
+      capability: "image",
+      provider: artifact.provider,
+      model: artifact.model,
+      routingDecision,
+    });
 
     return NextResponse.json({
       artifact,
@@ -34,15 +66,12 @@ export async function POST(request: Request) {
       requestedAspectRatio: body.aspectRatio ?? null,
       estimatedCost: job.estimatedCost ?? null,
       createdAt: Date.now(),
+      routingDecision,
+      budget: guard.budget,
     });
   } catch (error) {
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Unable to edit image.",
-      },
+      { error: error instanceof Error ? error.message : "Unable to edit image." },
       { status: 400 }
     );
   }

@@ -15,6 +15,11 @@ export type ProviderDescriptor = {
   capabilities: ProviderCapability[];
   configured: boolean;
   models: Partial<Record<ProviderCapability, string[]>>;
+  routing?: {
+    quality: number;
+    latencyMs: number;
+    estimatedCostUsd: Partial<Record<ProviderCapability, number>>;
+  };
 };
 
 export type ProviderArtifact = {

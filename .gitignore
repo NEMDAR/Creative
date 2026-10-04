@@ -8,3 +8,8 @@ out/
 dist/
 coverage/
 .nemdar-render/
+.nemdar-render-test/
+.nemdar-ops/
+.nemdar-ops-test/
+test-results/
+tsconfig.tsbuildinfo
