@@ -77,16 +77,14 @@ describe('LocalApiAdapter', () => {
     await expect(api.operations.status()).resolves.toBe('Operational');
   });
 
-  it('keeps authenticated project APIs behind a server-side transport', async () => {
+  it('keeps webhook administration behind a server-side transport', async () => {
     const api = new LocalApiAdapter(transport({}));
-    await expect(api.projects.list()).rejects.toThrow(/server-side transport/i);
-    await expect(api.editor.load('p1')).rejects.toThrow(/server-side transport/i);
     await expect(api.operations.webhooks()).rejects.toThrow(/server-side transport/i);
   });
 
-  it('maps authenticated projects when a server transport is injected', async () => {
-    const secure = transport({
-      '/api/v1/projects': {
+  it('maps workspace projects through the browser-safe integration endpoint', async () => {
+    const browser = transport({
+      '/api/workspace/projects': {
         projects: [
           {
             id: 'p-real',
@@ -106,7 +104,7 @@ describe('LocalApiAdapter', () => {
         ],
       },
     });
-    const api = new LocalApiAdapter(transport({}), secure);
+    const api = new LocalApiAdapter(browser);
     const rows = await api.projects.list();
     expect(rows[0]).toEqual(
       expect.objectContaining({

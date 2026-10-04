@@ -283,13 +283,11 @@ export class LocalApiAdapter implements StudioServices {
 
   projects: ProjectsService = {
     list: async () => {
-      const secure = this.requireServerTransport('Projects');
-      const payload = await secure.request<{ projects: ExternalProject[] }>('/api/v1/projects');
+      const payload = await this.transport.request<{ projects: ExternalProject[] }>('/api/workspace/projects');
       return (payload.projects ?? []).map(mapExternalProject);
     },
     create: async (name) => {
-      const secure = this.requireServerTransport('Project creation');
-      const project = await secure.request<ExternalProject>('/api/v1/projects', {
+      const project = await this.transport.request<ExternalProject>('/api/workspace/projects', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ name }),
@@ -308,11 +306,9 @@ export class LocalApiAdapter implements StudioServices {
 
   editor: EditorService = {
     load: async (projectId) => {
-      const secure = this.requireServerTransport('Project loading');
-      const project = await secure.request<ExternalProject>(
-        `/api/v1/projects/${encodeURIComponent(projectId)}`,
-      );
-      const mapped = mapExternalProject(project);
+      const payload = await this.transport.request<{ projects: ExternalProject[] }>('/api/workspace/projects');
+      const project = (payload.projects ?? []).find((row) => row.id === projectId);
+      const mapped = project ? mapExternalProject(project) : FALLBACK_PROJECT;
       return { project: mapped, approval: mapped.approval };
     },
   };
