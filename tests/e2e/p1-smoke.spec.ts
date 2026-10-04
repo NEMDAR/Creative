@@ -1912,3 +1912,38 @@ test("P6 audio mix normalizes measured peak and persists source track fades and 
   await expect(page.getByLabel("Audio fade out")).toHaveValue("0.1");
   await expect(page.locator("audio")).toHaveAttribute("data-normalization-gain", "2.000");
 });
+
+test("P6 proxy media swaps preview source and persists with local draft", async ({ page }) => {
+  await page.route("**/api/proxy", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "image/png",
+      headers: {
+        "x-nemdar-proxy-cache-key": "test-proxy-key",
+        "x-nemdar-source-bytes": String(PNG_1X1.length * 2),
+        "x-nemdar-proxy-bytes": String(PNG_1X1.length),
+      },
+      body: PNG_1X1,
+    });
+  });
+
+  await page.goto("/");
+  await page.locator('input[accept="video/*,image/*"]').setInputFiles({
+    name: "proxy-source.png",
+    mimeType: "image/png",
+    buffer: PNG_1X1,
+  });
+
+  await expect(page.getByTestId("asset-proxy-meta")).toContainText("Proxy preview");
+  await expect(page.locator("#creative-image")).toHaveAttribute("data-preview-source", "proxy");
+
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Save draft" }).click();
+
+  await page.reload();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Load draft" }).click();
+
+  await expect(page.locator("#creative-image")).toHaveAttribute("data-preview-source", "proxy");
+  await expect(page.getByTestId("asset-proxy-meta")).toContainText("Proxy preview");
+});

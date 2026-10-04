@@ -54,7 +54,7 @@ const initialProject: CreatorProject = {
   overlays: [],
 };
 
-type MediaItem = { id: string; kind: "video" | "image"; url: string; name: string; type: string; blob: Blob; duration: number; generation?: AssetGenerationMetadata };
+type MediaItem = { id: string; kind: "video" | "image"; url: string; name: string; type: string; blob: Blob; duration: number; generation?: AssetGenerationMetadata; proxyBlob?: Blob; proxyUrl?: string; proxyType?: string; proxySize?: number; proxySourceSize?: number; proxyGeneratedAt?: number; proxyCacheKey?: string };
 type MediaState = MediaItem | null;
 type AudioTrackRole = "music" | "voiceover" | "sfx";
 type AudioTrackItem = { id: string; url: string; name: string; type: string; blob: Blob; duration: number; startTime: number; gain: number; fadeIn: number; fadeOut: number; duckingEnabled: boolean; duckingGain: number; role: AudioTrackRole; normalizeEnabled: boolean; normalizeTarget: number; measuredPeak: number | null; generation?: AssetGenerationMetadata };
@@ -1007,6 +1007,49 @@ export default function PhaseOneEditor() {
     return url;
   }
 
+  async function ensureMediaProxy(item: MediaItem) {
+    try {
+      const form = new FormData();
+      form.append("file", item.blob, item.name);
+      form.append("kind", item.kind);
+
+      const response = await fetch("/api/proxy", {
+        method: "POST",
+        body: form,
+      });
+      if (!response.ok) {
+        throw new Error(`Proxy request failed (${response.status}).`);
+      }
+
+      const proxyBlob = await response.blob();
+      if (!proxyBlob.size) throw new Error("Proxy response was empty.");
+
+      const proxyUrl = createObjectUrl(proxyBlob);
+      const headerNumber = (name: string, fallback: number) => {
+        const value = Number(response.headers.get(name));
+        return Number.isFinite(value) && value > 0 ? value : fallback;
+      };
+      const patch: Partial<MediaItem> = {
+        proxyBlob,
+        proxyUrl,
+        proxyType: response.headers.get("content-type") || proxyBlob.type || undefined,
+        proxySize: headerNumber("x-nemdar-proxy-bytes", proxyBlob.size),
+        proxySourceSize: headerNumber("x-nemdar-source-bytes", item.blob.size),
+        proxyGeneratedAt: Date.now(),
+        proxyCacheKey: response.headers.get("x-nemdar-proxy-cache-key") || undefined,
+      };
+
+      setMediaItems((current) =>
+        current.map((entry) => (entry.id === item.id ? { ...entry, ...patch } : entry))
+      );
+      setMedia((current) =>
+        current?.id === item.id ? { ...current, ...patch } : current
+      );
+    } catch (error) {
+      console.warn("Proxy generation failed; continuing with original media.", error);
+    }
+  }
+
   async function onMediaUpload(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
     if (files.length === 0) return;
@@ -1045,6 +1088,10 @@ export default function PhaseOneEditor() {
       setMedia(first);
       setDuration(first.kind === "video" ? first.duration : 0);
       replaceProject((p) => ({ ...p, trimStart: 0, trimEnd: null }));
+    }
+
+    for (const item of nextItems) {
+      void ensureMediaProxy(item);
     }
 
     event.target.value = "";
@@ -3260,7 +3307,7 @@ export default function PhaseOneEditor() {
   function buildPhaseTwoSaveInput(): PhaseTwoSaveInput {
     return {
       project,
-      mediaItems: mediaItems.map(({ url: _url, ...item }) => item),
+      mediaItems: mediaItems.map(({ url: _url, proxyUrl: _proxyUrl, ...item }) => item),
       timeline,
       audioTrack: audioTrack
         ? (({ url: _url, ...track }) => track)(audioTrack)
@@ -3293,6 +3340,8 @@ export default function PhaseOneEditor() {
         ? withDefaultProvenance(item.generation)
         : undefined,
       url: createObjectUrl(item.blob),
+      proxyUrl: item.proxyBlob ? createObjectUrl(item.proxyBlob) : undefined,
+      proxyType: item.proxyType ?? item.proxyBlob?.type,
     }));
     const restoredAudio: AudioTrackItem | null = state.audioTrack
       ? {
@@ -4493,6 +4542,15 @@ export default function PhaseOneEditor() {
                     AI · {item.generation.provider} · {item.generation.model} · {item.generation.operation}
                   </small>
                 )}
+                {item.proxyBlob && (
+                  <small className="assetGeneration" data-testid="asset-proxy-meta">
+                    Proxy preview · {Math.round(
+                      ((item.proxySize ?? item.proxyBlob.size) /
+                        Math.max(1, item.proxySourceSize ?? item.blob.size)) *
+                        100
+                    )}% of source
+                  </small>
+                )}
                 <div className="assetActions">
                   <button
                     type="button"
@@ -5172,7 +5230,8 @@ export default function PhaseOneEditor() {
               {media?.kind === "video" && (
                 <video
                   ref={videoRef}
-                  src={media.url}
+                  src={media.proxyUrl ?? media.url}
+                  data-preview-source={media.proxyUrl ? "proxy" : "original"}
                   controls
                   playsInline
                   muted={project.muted}
@@ -5268,7 +5327,7 @@ export default function PhaseOneEditor() {
                   style={clipMediaStyle(activeMediaClip, transitionVisual.primaryClip?.assetId === media.id ? transitionVisual.primaryOpacity : 1)}
                 />
               )}
-              {media?.kind === "image" && <img id="creative-image" src={media.url} alt="Creative source" className="mediaLayer" style={clipMediaStyle(activeMediaClip, transitionVisual.primaryClip?.assetId === media.id ? transitionVisual.primaryOpacity : 1)} />}
+              {media?.kind === "image" && <img id="creative-image" src={media.proxyUrl ?? media.url} data-preview-source={media.proxyUrl ? "proxy" : "original"} alt="Creative source" className="mediaLayer" style={clipMediaStyle(activeMediaClip, transitionVisual.primaryClip?.assetId === media.id ? transitionVisual.primaryOpacity : 1)} />}
               {normalizeClipChroma(activeMediaClip?.chroma).enabled && (
                 <canvas
                   ref={chromaPreviewCanvasRef}
@@ -5281,7 +5340,7 @@ export default function PhaseOneEditor() {
               {transitionVisual.type === "crossfade" && transitionSecondaryMedia?.kind === "image" && (
                 <img
                   data-testid="transition-media-layer"
-                  src={transitionSecondaryMedia.url}
+                  src={transitionSecondaryMedia.proxyUrl ?? transitionSecondaryMedia.url}
                   alt="Transition source"
                   className="mediaLayer transitionMediaLayer"
                   style={clipMediaStyle(transitionVisual.secondaryClip, transitionVisual.secondaryOpacity)}

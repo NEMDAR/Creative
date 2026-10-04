@@ -29,6 +29,12 @@ export type PersistableMediaItem = {
   type: string;
   duration: number;
   generation?: AssetGenerationMetadata;
+  proxyBlob?: Blob;
+  proxyType?: string;
+  proxySize?: number;
+  proxySourceSize?: number;
+  proxyGeneratedAt?: number;
+  proxyCacheKey?: string;
   blob: Blob;
 };
 
@@ -71,7 +77,7 @@ export type PhaseTwoSaveInput = {
   selectedOverlayId: string | null;
 };
 
-type PersistedMediaItem = Omit<PersistableMediaItem, "blob">;
+type PersistedMediaItem = Omit<PersistableMediaItem, "blob" | "proxyBlob">;
 type PersistedAudioTrack = Omit<PersistableAudioTrack, "blob">;
 
 type PersistedPhaseTwoState = {
@@ -122,7 +128,7 @@ export type PhaseTwoSnapshotSummary = {
 
 type AssetRecord = {
   id: string;
-  kind: "video" | "image" | "audio";
+  kind: "video" | "image" | "audio" | "proxy";
   name: string;
   type: string;
   duration: number;
@@ -184,7 +190,7 @@ function requestResult<T>(request: IDBRequest<T>): Promise<T> {
 function toPersistedPhaseTwoState(input: PhaseTwoSaveInput): PersistedPhaseTwoState {
   return {
     project: input.project,
-    mediaItems: input.mediaItems.map(({ blob: _blob, ...item }) => item),
+    mediaItems: input.mediaItems.map(({ blob: _blob, proxyBlob: _proxyBlob, ...item }) => item),
     timeline: input.timeline,
     audioTrack: input.audioTrack
       ? (({ blob: _blob, ...track }) => track)(input.audioTrack)
@@ -216,6 +222,18 @@ function writeAssets(store: IDBObjectStore, input: PhaseTwoSaveInput) {
       blob: item.blob,
     };
     store.put(asset);
+
+    if (item.proxyBlob) {
+      const proxyAsset: AssetRecord = {
+        id: `proxy:${item.id}`,
+        kind: "proxy",
+        name: `${item.name}.proxy`,
+        type: (item.proxyType ?? item.proxyBlob.type) || "application/octet-stream",
+        duration: item.duration,
+        blob: item.proxyBlob,
+      };
+      store.put(proxyAsset);
+    }
   }
 
   if (input.audioTrack) {
@@ -245,9 +263,13 @@ async function hydratePhaseTwoState(
   for (const item of state.mediaItems) {
     const asset = await requestResult<AssetRecord | undefined>(store.get(item.id));
     if (!asset?.blob) continue;
+    const proxyAsset = await requestResult<AssetRecord | undefined>(
+      store.get(`proxy:${item.id}`)
+    );
     mediaItems.push({
       ...item,
       blob: asset.blob,
+      proxyBlob: proxyAsset?.blob,
     });
   }
 
