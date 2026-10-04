@@ -2,6 +2,7 @@ import { normalizeCaptionStyle, type CaptionStyleConfig, type CaptionTrack } fro
 import { normalizeBrandKit, type BrandKit } from "./brand-kit";
 import type { AssetGenerationMetadata } from "./assets";
 import type { TimelineState } from "./timeline";
+import type { StoryboardPlan } from "./storyboard";
 import type { CreatorProject } from "./types";
 
 export type PersistedSourceMedia = {
@@ -51,6 +52,7 @@ export type PhaseTwoSaveInput = {
   captions: CaptionTrack | null;
   captionStyle: CaptionStyleConfig;
   brandKit: BrandKit;
+  storyboard: StoryboardPlan | null;
   timelineZoom: number;
   snapEnabled: boolean;
   selectedClipId: string | null;
@@ -68,6 +70,7 @@ type PersistedPhaseTwoState = {
   captions: CaptionTrack | null;
   captionStyle: CaptionStyleConfig;
   brandKit: BrandKit;
+  storyboard: StoryboardPlan | null;
   timelineZoom: number;
   snapEnabled: boolean;
   selectedClipId: string | null;
@@ -172,6 +175,7 @@ function toPersistedPhaseTwoState(input: PhaseTwoSaveInput): PersistedPhaseTwoSt
     captions: input.captions ?? null,
     captionStyle: input.captionStyle,
     brandKit: input.brandKit,
+    storyboard: input.storyboard ?? null,
     timelineZoom: input.timelineZoom,
     snapEnabled: input.snapEnabled,
     selectedClipId: input.selectedClipId,
@@ -248,6 +252,7 @@ async function hydratePhaseTwoState(
     captions: state.captions ?? null,
     captionStyle: normalizeCaptionStyle(state.captionStyle),
     brandKit: normalizeBrandKit(state.brandKit),
+    storyboard: state.storyboard ?? null,
     timelineZoom: state.timelineZoom,
     snapEnabled: state.snapEnabled,
     selectedClipId: state.selectedClipId,

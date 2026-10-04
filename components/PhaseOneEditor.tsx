@@ -10,6 +10,7 @@ import { instantiateMarketingTemplate, MARKETING_TEMPLATES, type MarketingTempla
 import { compileEditorCommand, type EditorCommandPlan } from "../lib/editor/command-bar";
 import type { ProviderCapability, ProviderDirectorySnapshot, ProviderArtifact } from "../lib/providers/contracts";
 import type { AssetGenerationMetadata } from "../lib/editor/assets";
+import type { BrollOption, StoryboardAssetNeed, StoryboardPlan, StoryboardScene } from "../lib/editor/storyboard";
 import type { ServerRenderManifest } from "../lib/render/server-types";
 
 const RATIOS: Record<RatioKey, { w: number; h: number }> = {
@@ -383,6 +384,10 @@ export default function PhaseOneEditor() {
   const [voiceLanguage, setVoiceLanguage] = useState<"auto" | "ar" | "en">("auto");
   const [voiceGenerationState, setVoiceGenerationState] = useState<"idle" | "generating" | "error">("idle");
   const [voiceGenerationError, setVoiceGenerationError] = useState<string | null>(null);
+  const [storyboardBrief, setStoryboardBrief] = useState("");
+  const [storyboard, setStoryboard] = useState<StoryboardPlan | null>(null);
+  const [storyboardState, setStoryboardState] = useState<"idle" | "generating" | "error">("idle");
+  const [storyboardError, setStoryboardError] = useState<string | null>(null);
   const [captionLanguage, setCaptionLanguage] = useState<CaptionLanguage>("auto");
   const [captionState, setCaptionState] = useState<"idle" | "generating" | "ready" | "error">("idle");
   const [captionError, setCaptionError] = useState<string | null>(null);
@@ -954,6 +959,8 @@ export default function PhaseOneEditor() {
     setTimeline(nextTimeline);
     setAudioTrack(null);
     setCaptions(null);
+    setStoryboard(null);
+    setStoryboardBrief("");
     setCaptionLanguage("auto");
     setCaptionState("idle");
     setSelectedCaptionId(null);
@@ -981,6 +988,7 @@ export default function PhaseOneEditor() {
           captions: null,
           captionStyle: instantiated.captionStyle,
           brandKit,
+          storyboard: null,
           timelineZoom: 1,
           snapEnabled: true,
           selectedClipId: null,
@@ -1349,6 +1357,98 @@ export default function PhaseOneEditor() {
         error instanceof Error ? error.message : "Unable to generate voiceover."
       );
     }
+  }
+
+  async function generateStoryboardPlan() {
+    const brief = storyboardBrief.trim();
+    if (!brief) {
+      setStoryboardState("error");
+      setStoryboardError("Write a campaign brief or script first.");
+      return;
+    }
+
+    try {
+      setStoryboardState("generating");
+      setStoryboardError(null);
+      const response = await fetch("/api/generate/storyboard", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ brief }),
+      });
+      const payload = (await response.json()) as StoryboardPlan & { error?: string };
+      if (!response.ok || !payload.scenes?.length) {
+        throw new Error(payload.error || "Storyboard generation failed.");
+      }
+      setStoryboard(payload);
+      setStoryboardState("idle");
+    } catch (error) {
+      setStoryboardState("error");
+      setStoryboardError(
+        error instanceof Error ? error.message : "Unable to generate storyboard."
+      );
+    }
+  }
+
+  async function suggestStoryboardBroll() {
+    if (!storyboard) return;
+
+    try {
+      setStoryboardState("generating");
+      setStoryboardError(null);
+      const response = await fetch("/api/generate/broll", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          plan: storyboard,
+          assets: mediaItems.map((item) => ({
+            name: item.name,
+            kind: item.kind,
+          })),
+        }),
+      });
+      const payload = (await response.json()) as StoryboardPlan & { error?: string };
+      if (!response.ok || !payload.scenes?.length) {
+        throw new Error(payload.error || "B-roll suggestion failed.");
+      }
+      setStoryboard(payload);
+      setStoryboardState("idle");
+    } catch (error) {
+      setStoryboardState("error");
+      setStoryboardError(
+        error instanceof Error ? error.message : "Unable to suggest B-roll."
+      );
+    }
+  }
+
+  function updateStoryboardScene(
+    id: string,
+    patch: Partial<StoryboardScene>
+  ) {
+    setStoryboard((current) =>
+      current
+        ? {
+            ...current,
+            scenes: current.scenes.map((scene) =>
+              scene.id === id ? { ...scene, ...patch } : scene
+            ),
+          }
+        : current
+    );
+  }
+
+  function useBrollOption(option: BrollOption) {
+    if (option.kind === "existing" && option.assetName) {
+      const item = mediaItems.find((asset) => asset.name === option.assetName);
+      if (item) selectMediaItem(item);
+      return;
+    }
+
+    if (option.kind === "generate-image") {
+      setImagePrompt(option.prompt);
+      return;
+    }
+
+    setVideoPrompt(option.prompt);
   }
 
   function previewEditorCommand() {
@@ -2339,6 +2439,7 @@ export default function PhaseOneEditor() {
       captions,
       captionStyle,
       brandKit,
+      storyboard,
       timelineZoom,
       snapEnabled,
       selectedClipId,
@@ -2372,6 +2473,8 @@ export default function PhaseOneEditor() {
     setCaptions(state.captions ?? null);
     setCaptionStyle(normalizeCaptionStyle(state.captionStyle));
     setBrandKit(normalizeBrandKit(state.brandKit));
+    setStoryboard(state.storyboard ?? null);
+    setStoryboardBrief(state.storyboard?.brief ?? "");
     setCaptionLanguage(state.captions?.requestedLanguage ?? "auto");
     setCaptionState(state.captions?.cues.length ? "ready" : "idle");
     setSelectedCaptionId(state.captions?.cues[0]?.id ?? null);
@@ -2485,6 +2588,7 @@ export default function PhaseOneEditor() {
       captions: state.captions ?? null,
       captionStyle: normalizeCaptionStyle(state.captionStyle),
       brandKit: normalizeBrandKit(state.brandKit),
+      storyboard: state.storyboard ?? null,
       timelineZoom: state.timelineZoom,
       snapEnabled: state.snapEnabled,
       selectedClipId: state.selectedClipId,
@@ -2554,7 +2658,8 @@ export default function PhaseOneEditor() {
       mediaItems.length > 0 ||
       project.overlays.length > 0 ||
       audioTrack !== null ||
-      captions !== null;
+      captions !== null ||
+      storyboard !== null;
     if (!hasMeaningfulState) return;
 
     if (autosaveTimerRef.current !== null) {
@@ -2598,6 +2703,7 @@ export default function PhaseOneEditor() {
     captions,
     captionStyle,
     brandKit,
+    storyboard,
     timelineZoom,
     snapEnabled,
   ]);
@@ -3572,6 +3678,139 @@ export default function PhaseOneEditor() {
             </button>
             <small>Generated voiceover becomes the editable Audio Track.</small>
             {voiceGenerationError && <p className="providerError">{voiceGenerationError}</p>}
+          </div>
+
+          <h2>Storyboard</h2>
+          <div className="storyboardPanel" data-testid="storyboard-panel">
+            <label>
+              Brief / script
+              <textarea
+                aria-label="Storyboard brief"
+                value={storyboardBrief}
+                placeholder="Paste the campaign brief or script…"
+                onChange={(e) => setStoryboardBrief(e.target.value)}
+              />
+            </label>
+            <div className="imageToolGrid">
+              <button
+                type="button"
+                className="toolButton"
+                disabled={storyboardState === "generating"}
+                onClick={() => void generateStoryboardPlan()}
+              >
+                {storyboardState === "generating" && !storyboard
+                  ? "Planning…"
+                  : "Generate storyboard"}
+              </button>
+              <button
+                type="button"
+                className="toolButton"
+                disabled={!storyboard || storyboardState === "generating"}
+                onClick={() => void suggestStoryboardBroll()}
+              >
+                Suggest B-roll
+              </button>
+            </div>
+            {storyboardError && <p className="providerError">{storyboardError}</p>}
+            {storyboard && (
+              <>
+                <small data-testid="storyboard-meta">
+                  {storyboard.provider} · {storyboard.model} · {storyboard.scenes.length} scenes
+                </small>
+                <div className="storyboardScenes">
+                  {storyboard.scenes.map((scene) => (
+                    <article
+                      key={scene.id}
+                      className="storyboardScene"
+                      data-testid="storyboard-scene"
+                    >
+                      <div className="storyboardSceneHeader">
+                        <strong>{scene.order}. {scene.title}</strong>
+                        <span>{scene.duration}s</span>
+                      </div>
+                      <label>
+                        Title
+                        <input
+                          aria-label={`Storyboard scene ${scene.order} title`}
+                          value={scene.title}
+                          onChange={(e) =>
+                            updateStoryboardScene(scene.id, { title: e.target.value })
+                          }
+                        />
+                      </label>
+                      <label>
+                        Narration
+                        <textarea
+                          aria-label={`Storyboard scene ${scene.order} narration`}
+                          value={scene.narration}
+                          onChange={(e) =>
+                            updateStoryboardScene(scene.id, { narration: e.target.value })
+                          }
+                        />
+                      </label>
+                      <label>
+                        Shot prompt
+                        <textarea
+                          aria-label={`Storyboard scene ${scene.order} visual prompt`}
+                          value={scene.visualPrompt}
+                          onChange={(e) =>
+                            updateStoryboardScene(scene.id, { visualPrompt: e.target.value })
+                          }
+                        />
+                      </label>
+                      <div className="storyboardSceneGrid">
+                        <label>
+                          Duration
+                          <input
+                            aria-label={`Storyboard scene ${scene.order} duration`}
+                            type="number"
+                            min={1}
+                            max={30}
+                            value={scene.duration}
+                            onChange={(e) =>
+                              updateStoryboardScene(scene.id, {
+                                duration: Math.max(1, Number(e.target.value) || 1),
+                              })
+                            }
+                          />
+                        </label>
+                        <label>
+                          Asset need
+                          <select
+                            aria-label={`Storyboard scene ${scene.order} asset need`}
+                            value={scene.assetNeed}
+                            onChange={(e) =>
+                              updateStoryboardScene(scene.id, {
+                                assetNeed: e.target.value as StoryboardAssetNeed,
+                              })
+                            }
+                          >
+                            <option value="existing">Existing</option>
+                            <option value="generate-image">Generate image</option>
+                            <option value="generate-video">Generate video</option>
+                            <option value="b-roll">B-roll</option>
+                          </select>
+                        </label>
+                      </div>
+                      {scene.broll.length > 0 && (
+                        <div className="brollList" data-testid="broll-list">
+                          {scene.broll.map((option) => (
+                            <button
+                              type="button"
+                              key={`${scene.id}-${option.rank}`}
+                              onClick={() => useBrollOption(option)}
+                            >
+                              <b>#{option.rank}</b>
+                              <span>{option.label}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </article>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
 
           <h2>Brand Kit</h2>

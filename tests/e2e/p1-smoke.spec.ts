@@ -1257,3 +1257,44 @@ test("P4 generates text video image video and voiceover as editable persisted as
   await expect(page.getByTestId("asset-generation-meta").nth(2)).toContainText("video_generate");
   await expect(page.getByTestId("audio-generation-meta")).toContainText("voice_synthesize");
 });
+
+test("P4 storyboard stays editable and B-roll suggestions rank existing and generative options", async ({ page }) => {
+  await page.goto("/");
+
+  await page.locator('input[accept="video/*,image/*"]').setInputFiles({
+    name: "existing-broll.png",
+    mimeType: "image/png",
+    buffer: PNG_1X1,
+  });
+
+  await page.getByLabel("Storyboard brief").fill(
+    "Introduce the premium waterfront project. Show lifestyle amenities and finish with a strong call to action."
+  );
+  await page.getByRole("button", { name: "Generate storyboard" }).click();
+
+  await expect(page.getByTestId("storyboard-scene")).toHaveCount(2);
+  await expect(page.getByTestId("storyboard-meta")).toContainText("storyboard-v1");
+
+  await page.getByLabel("Storyboard scene 1 title").fill("Opening Hook");
+  await page.getByLabel("Storyboard scene 1 duration").fill("7");
+  await expect(page.getByLabel("Storyboard scene 1 title")).toHaveValue("Opening Hook");
+
+  await page.getByRole("button", { name: "Suggest B-roll" }).click();
+  await expect(page.getByTestId("broll-list")).toHaveCount(2);
+
+  const firstBroll = page.getByTestId("broll-list").first();
+  await expect(firstBroll).toContainText("existing-broll.png");
+  await expect(firstBroll).toContainText("Generate cinematic B-roll");
+  await expect(firstBroll).toContainText("Generate still B-roll");
+
+  await firstBroll.getByRole("button", { name: /Generate cinematic B-roll/ }).click();
+  await expect(page.getByLabel("Video prompt")).not.toHaveValue("");
+
+  await expect(page.getByTestId("save-state")).toHaveText("Saved", { timeout: 5_000 });
+  await page.reload();
+
+  await expect(page.getByTestId("storyboard-scene")).toHaveCount(2);
+  await expect(page.getByLabel("Storyboard scene 1 title")).toHaveValue("Opening Hook");
+  await expect(page.getByLabel("Storyboard scene 1 duration")).toHaveValue("7");
+  await expect(page.getByTestId("broll-list").first()).toContainText("existing-broll.png");
+});
