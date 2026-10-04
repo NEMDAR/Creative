@@ -609,7 +609,7 @@ test("P2 durable server render queue exports a real MP4", async ({ page }) => {
   const info = await stat(downloadedPath);
   expect(info.size).toBeGreaterThan(1_000);
 
-  await expect(renderState).toContainText("Complete Ã‚Â· 100%");
+  await expect(renderState).toContainText("Complete · 100%");
 });
 
 test("P2 representative long project stays responsive and renders MP4", async ({ page }) => {
@@ -722,12 +722,12 @@ test("P3 automatic Arabic captions generate edit preview and persist", async ({ 
 
   const preview = page.getByTestId("caption-preview");
   await expect(preview).toBeVisible();
-  await expect(preview).toContainText("Ã™â€¦Ã˜Â±Ã˜Â­Ã˜Â¨Ã™â€¹Ã˜Â§ Ã˜Â¨Ã™Æ’ Ã™ÂÃ™Å  Ã™â€ Ã™â€¦Ã˜Â¯Ã˜Â§Ã˜Â± Ã™Æ’Ã˜Â±Ã™Å Ã˜ÂªÃ™Å Ã™Â Ã˜Â³Ã˜ÂªÃ™Ë†Ã˜Â¯Ã™Å Ã™Ë†");
+  await expect(preview).toContainText("مرحبًا بك في نمدار كريتيف ستوديو");
   await expect(preview).toHaveAttribute("dir", "rtl");
 
   const captionText = page.getByLabel("Caption text");
-  await captionText.fill("Ã™â€ Ã™â€¦Ã˜Â¯Ã˜Â§Ã˜Â± Ã™Æ’Ã˜Â±Ã™Å Ã˜ÂªÃ™Å Ã™Â Ã¢â‚¬â€ Ã™Æ’Ã˜Â§Ã˜Â¨Ã˜ÂªÃ˜Â´Ã™â€  Ã™â€¦Ã˜Â¹Ã˜Â¯Ã™â€ž");
-  await expect(preview).toHaveText("Ã™â€ Ã™â€¦Ã˜Â¯Ã˜Â§Ã˜Â± Ã™Æ’Ã˜Â±Ã™Å Ã˜ÂªÃ™Å Ã™Â Ã¢â‚¬â€ Ã™Æ’Ã˜Â§Ã˜Â¨Ã˜ÂªÃ˜Â´Ã™â€  Ã™â€¦Ã˜Â¹Ã˜Â¯Ã™â€ž");
+  await captionText.fill("نمدار كريتيف — كابتشن معدل");
+  await expect(preview).toHaveText("نمدار كريتيف — كابتشن معدل");
 
   await page.getByLabel("Caption end").fill("1.1");
   await expect(page.locator(".captionCue").first()).toContainText("00:01.1");
@@ -740,8 +740,8 @@ test("P3 automatic Arabic captions generate edit preview and persist", async ({ 
   await page.reload();
 
   await expect(page.getByTestId("caption-meta")).toContainText("ar", { timeout: 5_000 });
-  await expect(page.getByLabel("Caption text")).toHaveValue("Ã™â€ Ã™â€¦Ã˜Â¯Ã˜Â§Ã˜Â± Ã™Æ’Ã˜Â±Ã™Å Ã˜ÂªÃ™Å Ã™Â Ã¢â‚¬â€ Ã™Æ’Ã˜Â§Ã˜Â¨Ã˜ÂªÃ˜Â´Ã™â€  Ã™â€¦Ã˜Â¹Ã˜Â¯Ã™â€ž");
-  await expect(page.getByTestId("caption-preview")).toHaveText("Ã™â€ Ã™â€¦Ã˜Â¯Ã˜Â§Ã˜Â± Ã™Æ’Ã˜Â±Ã™Å Ã˜ÂªÃ™Å Ã™Â Ã¢â‚¬â€ Ã™Æ’Ã˜Â§Ã˜Â¨Ã˜ÂªÃ˜Â´Ã™â€  Ã™â€¦Ã˜Â¹Ã˜Â¯Ã™â€ž");
+  await expect(page.getByLabel("Caption text")).toHaveValue("نمدار كريتيف — كابتشن معدل");
+  await expect(page.getByTestId("caption-preview")).toHaveText("نمدار كريتيف — كابتشن معدل");
 });
 
 test("P3 caption style presets control typography safe-zone and persist", async ({ page }) => {

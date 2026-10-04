@@ -4337,7 +4337,8 @@ export default function PhaseOneEditor() {
       return;
     }
 
-    const canvasStream = canvas.captureStream(30);
+    const canvasStream = canvas.captureStream(0);
+    const canvasVideoTrack = canvasStream.getVideoTracks()[0] as MediaStreamTrack & { requestFrame?: () => void };
     const captureVideo = video as HTMLVideoElement & { captureStream?: () => MediaStream };
     let exportAudioContext: AudioContext | null = null;
 
@@ -4417,7 +4418,8 @@ export default function PhaseOneEditor() {
         overlayImages,
         exportTimelineStart
       );
-      recorder.start(250);
+      canvasVideoTrack?.requestFrame?.();
+      recorder.start(50);
       void video.play().catch(() => undefined);
 
       await new Promise<void>((resolve, reject) => {
@@ -4441,6 +4443,7 @@ export default function PhaseOneEditor() {
                 overlayImages,
                 frameTimelineTime
               );
+              canvasVideoTrack?.requestFrame?.();
             }
 
             const elapsedMs = performance.now() - startedAt;
@@ -7630,7 +7633,7 @@ export default function PhaseOneEditor() {
           )}
           {selected?.kind === "text" && (
             <>
-              <label>Text<textarea value={selected.text} dir="auto" onChange={(e) => updateOverlay(selected.id, { text: e.target.value } as Partial<Overlay>)} /></label>
+              <label>Text<textarea aria-label="Text" value={selected.text} dir="auto" onChange={(e) => updateOverlay(selected.id, { text: e.target.value } as Partial<Overlay>)} /></label>
               <label>Font size<input type="range" min="18" max="96" value={selected.fontSize} onChange={(e) => updateOverlay(selected.id, { fontSize: Number(e.target.value) } as Partial<Overlay>)} /></label>
               <label>Weight<select value={selected.fontWeight} onChange={(e) => updateOverlay(selected.id, { fontWeight: Number(e.target.value) } as Partial<Overlay>)}><option value="400">Regular</option><option value="600">Semi Bold</option><option value="700">Bold</option><option value="800">Extra Bold</option></select></label>
               <label>Color<input type="color" value={selected.color} onChange={(e) => updateOverlay(selected.id, { color: e.target.value } as Partial<Overlay>)} /></label>

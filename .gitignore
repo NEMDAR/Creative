@@ -9,7 +9,9 @@ dist/
 coverage/
 .nemdar-render/
 .nemdar-render-test/
+.nemdar-render-test-*/
 .nemdar-ops/
 .nemdar-ops-test/
+.nemdar-ops-test-*/
 test-results/
 tsconfig.tsbuildinfo
