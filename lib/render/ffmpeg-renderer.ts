@@ -109,19 +109,38 @@ async function runFfmpeg(
       void fs.appendFile(logFile, text);
     };
 
+    const configuredTimeout = Number(process.env.RENDER_FFMPEG_TIMEOUT_MS ?? 120_000);
+    const timeoutMs = Math.max(
+      5_000,
+      Math.min(30 * 60_000, Number.isFinite(configuredTimeout) ? configuredTimeout : 120_000)
+    );
+    let settled = false;
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      callback();
+    };
+    const timeout = setTimeout(() => {
+      child.kill("SIGKILL");
+      finish(() => reject(new Error(`FFmpeg timed out after ${timeoutMs}ms. ${tail.slice(-2500)}`)));
+    }, timeoutMs);
+
     child.stdout.on("data", append);
     child.stderr.on("data", append);
-    child.on("error", reject);
+    child.on("error", (error) => finish(() => reject(error)));
     child.on("close", (code) => {
-      if (code === 0) {
-        resolve();
-      } else {
-        reject(
-          new Error(
-            `FFmpeg exited with code ${code ?? "unknown"}. ${tail.slice(-2500)}`
-          )
-        );
-      }
+      finish(() => {
+        if (code === 0) {
+          resolve();
+        } else {
+          reject(
+            new Error(
+              `FFmpeg exited with code ${code ?? "unknown"}. ${tail.slice(-2500)}`
+            )
+          );
+        }
+      });
     });
   });
 }

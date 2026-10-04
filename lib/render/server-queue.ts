@@ -5,12 +5,26 @@ import { extname, join } from "node:path";
 import { renderManifestToMp4 } from "./ffmpeg-renderer";
 import type {
   DurableRenderJob,
+  RenderJobPriority,
   ServerRenderManifest,
 } from "./server-types";
 
 type AssetMap = Record<string, string>;
 
 const runningJobs = new Set<string>();
+
+function maxConcurrency() {
+  const parsed = Number(process.env.RENDER_MAX_CONCURRENCY ?? 2);
+  return Math.max(1, Math.min(8, Number.isFinite(parsed) ? Math.floor(parsed) : 2));
+}
+
+function normalizePriority(value: FormDataEntryValue | null): RenderJobPriority {
+  return value === "high" || value === "low" ? value : "normal";
+}
+
+function priorityRank(priority: RenderJobPriority) {
+  return priority === "high" ? 3 : priority === "normal" ? 2 : 1;
+}
 
 function queueRoot() {
   const configured = process.env.RENDER_QUEUE_DIR?.trim();
@@ -96,7 +110,13 @@ function validateManifest(value: unknown): ServerRenderManifest {
 
 async function readJob(jobId: string) {
   if (!existsSync(jobFile(jobId))) return null;
-  return readJson<DurableRenderJob>(jobFile(jobId));
+  const job = await readJson<DurableRenderJob>(jobFile(jobId));
+  return {
+    ...job,
+    priority: job.priority ?? "normal",
+    attempts: Number.isFinite(job.attempts) ? job.attempts : 0,
+    maxAttempts: Number.isFinite(job.maxAttempts) ? Math.max(1, job.maxAttempts) : 2,
+  } satisfies DurableRenderJob;
 }
 
 async function updateJob(
@@ -124,6 +144,15 @@ export async function createRenderJob(
   }
 
   const manifest = validateManifest(JSON.parse(rawManifest));
+  const priority = normalizePriority(formData.get("priority"));
+  const requestedMaxAttempts = Number(formData.get("maxAttempts") ?? 2);
+  const maxAttempts = Math.max(
+    1,
+    Math.min(
+      5,
+      Number.isFinite(requestedMaxAttempts) ? Math.floor(requestedMaxAttempts) : 2
+    )
+  );
   const id = randomUUID();
   const dir = jobDir(id);
   const assetsDir = join(dir, "assets");
@@ -163,6 +192,9 @@ export async function createRenderJob(
     status: "queued",
     progress: 0,
     stage: "Queued",
+    priority,
+    attempts: 0,
+    maxAttempts,
     createdAt: now,
     updatedAt: now,
     manifestFile: "manifest.json",
@@ -172,7 +204,7 @@ export async function createRenderJob(
   await writeJsonAtomic(jobFile(id), job);
 
   setTimeout(() => {
-    void kickRenderJob(id);
+    void scheduleRenderQueue();
   }, 0);
 
   return job;
@@ -182,23 +214,39 @@ export async function getRenderJob(jobId: string) {
   const job = await readJob(jobId);
   if (!job) return null;
 
-  if (
-    (job.status === "queued" || job.status === "running") &&
-    !runningJobs.has(jobId)
-  ) {
+  if (job.status === "queued" || (job.status === "running" && !runningJobs.has(jobId))) {
     setTimeout(() => {
-      void kickRenderJob(jobId);
+      void scheduleRenderQueue();
     }, 0);
   }
 
   return job;
 }
 
-export async function kickRenderJob(jobId: string) {
-  if (runningJobs.has(jobId)) return;
-  const job = await readJob(jobId);
-  if (!job || job.status === "succeeded" || job.status === "failed") return;
+export async function scheduleRenderQueue() {
+  const capacity = Math.max(0, maxConcurrency() - runningJobs.size);
+  if (capacity === 0) return;
 
+  const queued = (await listRecentRenderJobs(50))
+    .filter((job) => job.status === "queued" && !runningJobs.has(job.jobId))
+    .sort((a, b) => {
+      const priorityDelta = priorityRank(b.priority) - priorityRank(a.priority);
+      return priorityDelta || a.createdAt - b.createdAt;
+    })
+    .slice(0, capacity);
+
+  for (const job of queued) {
+    void kickRenderJob(job.jobId);
+  }
+}
+
+export async function kickRenderJob(jobId: string) {
+  if (runningJobs.has(jobId) || runningJobs.size >= maxConcurrency()) return;
+  const job = await readJob(jobId);
+  if (!job || job.status !== "queued") return;
+
+  const attempt = job.attempts + 1;
+  const workerId = `worker-${process.pid}-${randomUUID().slice(0, 8)}`;
   runningJobs.add(jobId);
   try {
     const dir = jobDir(jobId);
@@ -208,45 +256,95 @@ export async function kickRenderJob(jobId: string) {
     await updateJob(jobId, {
       status: "running",
       progress: Math.max(1, job.progress),
-      stage: "Starting FFmpeg worker",
+      stage: `Starting FFmpeg worker · attempt ${attempt}/${job.maxAttempts}`,
+      attempts: attempt,
+      workerId,
+      startedAt: Date.now(),
+      completedAt: undefined,
       error: undefined,
     });
 
-    await renderManifestToMp4(
-      dir,
-      manifest,
-      assets,
-      job.outputFile,
-      {
-        onProgress: async (progress, stage) => {
-          await updateJob(jobId, {
-            status: "running",
-            progress,
-            stage,
-          });
-        },
-      }
-    );
+    await renderManifestToMp4(dir, manifest, assets, job.outputFile, {
+      onProgress: async (progress, stage) => {
+        await updateJob(jobId, {
+          status: "running",
+          progress,
+          stage,
+          workerId,
+        });
+      },
+    });
 
     await updateJob(jobId, {
       status: "succeeded",
       progress: 100,
       stage: "Complete",
       outputUrl: `/api/render/jobs/${jobId}/output`,
+      completedAt: Date.now(),
+      workerId,
       error: undefined,
     });
   } catch (error) {
-    await updateJob(jobId, {
-      status: "failed",
-      stage: "Failed",
-      error:
-        error instanceof Error
-          ? error.message.slice(-6000)
-          : "Unexpected render worker failure.",
-    }).catch(() => undefined);
+    const message =
+      error instanceof Error
+        ? error.message.slice(-6000)
+        : "Unexpected render worker failure.";
+    if (attempt < job.maxAttempts) {
+      await updateJob(jobId, {
+        status: "queued",
+        progress: 0,
+        stage: `Retry queued · attempt ${attempt + 1}/${job.maxAttempts}`,
+        workerId: undefined,
+        error: message,
+      }).catch(() => undefined);
+    } else {
+      await updateJob(jobId, {
+        status: "failed",
+        stage: "Failed",
+        completedAt: Date.now(),
+        workerId,
+        error: message,
+      }).catch(() => undefined);
+    }
   } finally {
     runningJobs.delete(jobId);
+    setTimeout(() => {
+      void scheduleRenderQueue();
+    }, 50);
   }
+}
+
+export async function retryRenderJob(jobId: string) {
+  const job = await readJob(jobId);
+  if (!job) return null;
+  if (job.status !== "failed") {
+    throw new Error("Only failed render jobs can be retried manually.");
+  }
+  const next = await updateJob(jobId, {
+    status: "queued",
+    progress: 0,
+    stage: "Manual retry queued",
+    maxAttempts: Math.max(job.maxAttempts, job.attempts + 1),
+    completedAt: undefined,
+    workerId: undefined,
+    error: undefined,
+  });
+  setTimeout(() => {
+    void scheduleRenderQueue();
+  }, 0);
+  return next;
+}
+
+export async function getRenderQueueSnapshot() {
+  const jobs = await listRecentRenderJobs(50);
+  return {
+    maxConcurrency: maxConcurrency(),
+    running: runningJobs.size,
+    queued: jobs.filter((job) => job.status === "queued").length,
+    failed: jobs.filter((job) => job.status === "failed").length,
+    succeeded: jobs.filter((job) => job.status === "succeeded").length,
+    runningJobIds: [...runningJobs],
+  };
 }
 
 export async function renderJobOutput(jobId: string) {

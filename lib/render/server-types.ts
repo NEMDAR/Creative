@@ -47,13 +47,21 @@ export type RenderJobStatus =
   | "succeeded"
   | "failed";
 
+export type RenderJobPriority = "low" | "normal" | "high";
+
 export type DurableRenderJob = {
   jobId: string;
   status: RenderJobStatus;
   progress: number;
   stage: string;
+  priority: RenderJobPriority;
+  attempts: number;
+  maxAttempts: number;
+  workerId?: string;
   createdAt: number;
   updatedAt: number;
+  startedAt?: number;
+  completedAt?: number;
   manifestFile: string;
   assetMapFile: string;
   outputFile: string;

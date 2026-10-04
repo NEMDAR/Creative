@@ -2360,3 +2360,115 @@ test("P7 external API authenticates projects jobs and records webhook state chan
   expect(statusEvents.length).toBeGreaterThanOrEqual(2);
   expect(statusEvents[0].deliveryStatus).toBe("pending");
 });
+
+test("P7 render workers expose priority attempts retry and queue observability", async ({ request }) => {
+  test.setTimeout(120_000);
+
+  const manifest = {
+    schemaVersion: 1,
+    projectName: "P7 Worker Smoke",
+    output: { width: 320, height: 320, fps: 12 },
+    duration: 1,
+    timeline: {
+      schemaVersion: 1,
+      playhead: 0,
+      duration: 1,
+      tracks: [{
+        id: "visual-1",
+        kind: "visual",
+        clips: [{
+          id: "clip-asset-1",
+          assetId: "asset-1",
+          assetName: "worker.png",
+          kind: "image",
+          timelineStart: 0,
+          sourceStart: 0,
+          duration: 1,
+          sourceDuration: null,
+          transitionOut: null,
+          transform: { fit: "cover", cropX: 50, cropY: 50, zoom: 1, rotation: 0, speed: 1 },
+          chroma: { enabled: false, keyColor: "#00FF00", tolerance: 0.22, spill: 0.35, backgroundColor: "#0B1020" },
+          colorGrade: { exposure: 0, contrast: 1, saturation: 1, lut: "none" },
+        }],
+      }],
+    },
+    media: [{ id: "asset-1", field: "media-asset-1", kind: "image", name: "worker.png" }],
+    overlays: [],
+    audioTrack: null,
+  };
+
+  const successResponse = await request.post("/api/render/jobs", {
+    multipart: {
+      manifest: JSON.stringify(manifest),
+      priority: "high",
+      maxAttempts: "2",
+      "media-asset-1": {
+        name: "worker.png",
+        mimeType: "image/png",
+        buffer: PNG_1X1,
+      },
+    },
+  });
+  expect(successResponse.status()).toBe(202);
+  const success = await successResponse.json();
+  expect(success.priority).toBe("high");
+  expect(success.maxAttempts).toBe(2);
+
+  let successfulJob: any = null;
+  await expect.poll(async () => {
+    const response = await request.get(`/api/render/jobs/${success.jobId}`);
+    successfulJob = await response.json();
+    return successfulJob.status;
+  }, { timeout: 60_000 }).toBe("succeeded");
+
+  expect(successfulJob.attempts).toBe(1);
+  expect(successfulJob.workerId).toMatch(/^worker-/);
+  expect(successfulJob.startedAt).toBeGreaterThan(0);
+  expect(successfulJob.completedAt).toBeGreaterThanOrEqual(successfulJob.startedAt);
+
+  const queueResponse = await request.get("/api/render/jobs");
+  const queuePayload = await queueResponse.json();
+  expect(queuePayload.queue.maxConcurrency).toBeGreaterThanOrEqual(1);
+  expect(queuePayload.jobs.some((job: any) => job.jobId === success.jobId)).toBeTruthy();
+
+  const badManifest = {
+    ...manifest,
+    output: { ...manifest.output, fps: 0 },
+  };
+  const badResponse = await request.post("/api/render/jobs", {
+    multipart: {
+      manifest: JSON.stringify(manifest),
+      priority: "low",
+      maxAttempts: "1",
+      "media-asset-1": {
+        name: "broken.png",
+        mimeType: "image/png",
+        buffer: Buffer.from("not-a-real-png"),
+      },
+    },
+  });
+  expect(badResponse.status()).toBe(202);
+  const bad = await badResponse.json();
+
+  let failedJob: any = null;
+  await expect.poll(async () => {
+    const response = await request.get(`/api/render/jobs/${bad.jobId}`);
+    failedJob = await response.json();
+    return failedJob.status;
+  }, { timeout: 45_000 }).toBe("failed");
+  expect(failedJob.attempts).toBe(1);
+
+  const retryResponse = await request.post(`/api/render/jobs/${bad.jobId}`);
+  expect(retryResponse.status()).toBe(200);
+  const retried = await retryResponse.json();
+  expect(retried.status).toBe("queued");
+  expect(retried.maxAttempts).toBe(2);
+
+  await expect.poll(async () => {
+    const response = await request.get(`/api/render/jobs/${bad.jobId}`);
+    return (await response.json()).status;
+  }, { timeout: 45_000 }).toBe("failed");
+
+  const finalFailed = await (await request.get(`/api/render/jobs/${bad.jobId}`)).json();
+  expect(finalFailed.attempts).toBe(2);
+});

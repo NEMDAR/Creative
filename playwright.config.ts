@@ -19,7 +19,7 @@ export default defineConfig({
   webServer: {
     command: "npm run dev -- --hostname 127.0.0.1 --port 3100",
     url: "http://127.0.0.1:3100",
-    env: { CAPTION_PROVIDER: "mock", NEMDAR_API_KEY: "test-api-key" },
+    env: { CAPTION_PROVIDER: "mock", NEMDAR_API_KEY: "test-api-key", RENDER_FFMPEG_TIMEOUT_MS: "8000" },
     reuseExistingServer: false,
     timeout: 120_000,
   },

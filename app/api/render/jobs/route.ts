@@ -1,5 +1,6 @@
 import {
   createRenderJob,
+  getRenderQueueSnapshot,
   listRecentRenderJobs,
 } from "../../../../lib/render/server-queue";
 
@@ -12,8 +13,14 @@ function publicJob(job: Awaited<ReturnType<typeof createRenderJob>>) {
     status: job.status,
     progress: job.progress,
     stage: job.stage,
+    priority: job.priority,
+    attempts: job.attempts,
+    maxAttempts: job.maxAttempts,
+    workerId: job.workerId,
     createdAt: job.createdAt,
     updatedAt: job.updatedAt,
+    startedAt: job.startedAt,
+    completedAt: job.completedAt,
     outputUrl: job.outputUrl,
     error: job.error,
   };
@@ -32,15 +39,25 @@ export async function POST(request: Request) {
 }
 
 export async function GET() {
-  const jobs = await listRecentRenderJobs();
+  const [jobs, queue] = await Promise.all([
+    listRecentRenderJobs(),
+    getRenderQueueSnapshot(),
+  ]);
   return Response.json({
+    queue,
     jobs: jobs.map((job) => ({
       jobId: job.jobId,
       status: job.status,
       progress: job.progress,
       stage: job.stage,
+      priority: job.priority,
+      attempts: job.attempts,
+      maxAttempts: job.maxAttempts,
+      workerId: job.workerId,
       createdAt: job.createdAt,
       updatedAt: job.updatedAt,
+      startedAt: job.startedAt,
+      completedAt: job.completedAt,
       outputUrl: job.outputUrl,
       error: job.error,
     })),
