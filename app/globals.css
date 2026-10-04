@@ -363,3 +363,8 @@ h2 { font-size:12px; text-transform:uppercase; letter-spacing:.1em; color:var(--
 
 .colorGradePanel { display:flex; flex-direction:column; gap:8px; padding:10px; border:1px solid rgba(245,158,11,.22); border-radius:11px; background:rgba(245,158,11,.035); }
 .colorGradePanel small { color:var(--muted); font-size:9px; line-height:1.4; }
+
+.audioMixPanel { display:flex; flex-direction:column; gap:8px; padding:10px; border:1px solid rgba(59,130,246,.22); border-radius:11px; background:rgba(59,130,246,.035); }
+.audioMixPanel .toggleLabel { display:flex; flex-direction:row; align-items:center; gap:8px; }
+.audioMixPanel .toggleLabel input { width:auto; }
+.audioMixPanel small { color:var(--muted); font-size:9px; line-height:1.4; }

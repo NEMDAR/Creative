@@ -56,7 +56,8 @@ const initialProject: CreatorProject = {
 
 type MediaItem = { id: string; kind: "video" | "image"; url: string; name: string; type: string; blob: Blob; duration: number; generation?: AssetGenerationMetadata };
 type MediaState = MediaItem | null;
-type AudioTrackItem = { id: string; url: string; name: string; type: string; blob: Blob; duration: number; startTime: number; gain: number; fadeIn: number; fadeOut: number; duckingEnabled: boolean; duckingGain: number; generation?: AssetGenerationMetadata };
+type AudioTrackRole = "music" | "voiceover" | "sfx";
+type AudioTrackItem = { id: string; url: string; name: string; type: string; blob: Blob; duration: number; startTime: number; gain: number; fadeIn: number; fadeOut: number; duckingEnabled: boolean; duckingGain: number; role: AudioTrackRole; normalizeEnabled: boolean; normalizeTarget: number; measuredPeak: number | null; generation?: AssetGenerationMetadata };
 type SilenceReviewRange = { id: string; startTime: number; endTime: number; duration: number; selected: boolean };
 type SilenceSourceKind = "video" | "audio";
 type SceneSuggestion = { id: string; time: number; selected: boolean };
@@ -414,6 +415,47 @@ function hexToRgb(hex: string) {
   };
 }
 
+function audioNormalizationGain(track: AudioTrackItem) {
+  if (
+    !track.normalizeEnabled ||
+    track.measuredPeak === null ||
+    track.measuredPeak <= 0.0001
+  ) {
+    return 1;
+  }
+  return Math.max(
+    0.25,
+    Math.min(2, track.normalizeTarget / track.measuredPeak)
+  );
+}
+
+async function measureAudioPeak(blob: Blob): Promise<number | null> {
+  try {
+    const AudioContextCtor =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext?: typeof AudioContext })
+        .webkitAudioContext;
+    if (!AudioContextCtor) return null;
+
+    const context = new AudioContextCtor();
+    try {
+      const buffer = await context.decodeAudioData(await blob.arrayBuffer());
+      let peak = 0;
+      for (let channel = 0; channel < buffer.numberOfChannels; channel += 1) {
+        const samples = buffer.getChannelData(channel);
+        for (let index = 0; index < samples.length; index += 1) {
+          peak = Math.max(peak, Math.abs(samples[index]));
+        }
+      }
+      return Number.isFinite(peak) ? peak : null;
+    } finally {
+      await context.close().catch(() => undefined);
+    }
+  } catch {
+    return null;
+  }
+}
+
 async function rasterizeOverlayAsset(
   overlay: Overlay,
   outputWidth: number,
@@ -635,8 +677,20 @@ export default function PhaseOneEditor() {
     const fadeOutGain = audioTrack.fadeOut > 0 ? Math.min(1, timeLeft / audioTrack.fadeOut) : 1;
     const speechActive = Boolean(captionCueAtTime(captions, timeline.playhead));
     const duckingMultiplier = audioTrack.duckingEnabled && speechActive ? audioTrack.duckingGain : 1;
-    audio.volume = Math.max(0, Math.min(1, audioTrack.gain * Math.min(fadeInGain, fadeOutGain) * duckingMultiplier));
+    const normalizationMultiplier = audioNormalizationGain(audioTrack);
+    audio.volume = Math.max(
+      0,
+      Math.min(
+        1,
+        audioTrack.gain *
+          normalizationMultiplier *
+          Math.min(fadeInGain, fadeOutGain) *
+          duckingMultiplier
+      )
+    );
     audio.dataset.effectiveGain = audio.volume.toFixed(3);
+    audio.dataset.normalizationGain = normalizationMultiplier.toFixed(3);
+    audio.dataset.trackRole = audioTrack.role;
 
     if (videoRef.current && !videoRef.current.paused && audio.paused) {
       void audio.play().catch(() => undefined);
@@ -1028,7 +1082,10 @@ export default function PhaseOneEditor() {
     if (!file || !file.type.startsWith("audio/")) return;
 
     const url = createObjectUrl(file);
-    const audioDuration = await probeAudioDuration(url);
+    const [audioDuration, measuredPeak] = await Promise.all([
+      probeAudioDuration(url),
+      measureAudioPeak(file),
+    ]);
     const maxStart = Math.max(0, timeline.duration - 0.1);
     const startTime = Math.max(0, Math.min(timeline.playhead, maxStart));
 
@@ -1045,6 +1102,10 @@ export default function PhaseOneEditor() {
       fadeOut: 0,
       duckingEnabled: false,
       duckingGain: 0.3,
+      role: "music",
+      normalizeEnabled: false,
+      normalizeTarget: 0.85,
+      measuredPeak,
     });
     event.target.value = "";
   }
@@ -1086,6 +1147,10 @@ export default function PhaseOneEditor() {
       next.fadeOut = Math.max(0, Math.min(next.fadeOut, next.duration));
       next.duckingGain = Math.max(0, Math.min(1, next.duckingGain ?? 0.3));
       next.duckingEnabled = Boolean(next.duckingEnabled);
+      next.role = next.role === "voiceover" || next.role === "sfx" ? next.role : "music";
+      next.normalizeEnabled = Boolean(next.normalizeEnabled);
+      next.normalizeTarget = Math.max(0.1, Math.min(1, next.normalizeTarget ?? 0.85));
+      next.measuredPeak = next.measuredPeak === null || Number.isFinite(next.measuredPeak) ? next.measuredPeak : null;
       return next;
     });
   }
@@ -1664,7 +1729,10 @@ export default function PhaseOneEditor() {
           ? blob
           : blob.slice(0, blob.size, artifact.mimeType);
       const url = createObjectUrl(normalizedBlob);
-      const audioDuration = await probeAudioDuration(url);
+      const [audioDuration, measuredPeak] = await Promise.all([
+        probeAudioDuration(url),
+        measureAudioPeak(normalizedBlob),
+      ]);
       const startTime =
         timeline.duration > 0
           ? Math.max(0, Math.min(timeline.playhead, timeline.duration - 0.1))
@@ -1687,6 +1755,10 @@ export default function PhaseOneEditor() {
         fadeOut: 0,
         duckingEnabled: false,
         duckingGain: 0.3,
+        role: "voiceover",
+        normalizeEnabled: true,
+        normalizeTarget: 0.85,
+        measuredPeak,
         generation: withDefaultProvenance({
           provider: artifact.provider,
           model: artifact.model,
@@ -3227,6 +3299,13 @@ export default function PhaseOneEditor() {
           ...state.audioTrack,
           duckingEnabled: state.audioTrack.duckingEnabled ?? false,
           duckingGain: state.audioTrack.duckingGain ?? 0.3,
+          role:
+            state.audioTrack.role === "voiceover" || state.audioTrack.role === "sfx"
+              ? state.audioTrack.role
+              : "music",
+          normalizeEnabled: state.audioTrack.normalizeEnabled ?? false,
+          normalizeTarget: state.audioTrack.normalizeTarget ?? 0.85,
+          measuredPeak: state.audioTrack.measuredPeak ?? null,
           generation: state.audioTrack.generation
             ? withDefaultProvenance(state.audioTrack.generation)
             : undefined,
@@ -6195,6 +6274,87 @@ export default function PhaseOneEditor() {
                   AI · {audioTrack.generation.provider} · {audioTrack.generation.model} · {audioTrack.generation.operation}
                 </small>
               )}
+              <div className="audioMixPanel" data-testid="audio-mix-panel">
+                <label>
+                  Track role
+                  <select
+                    aria-label="Audio track role"
+                    value={audioTrack.role}
+                    onChange={(e) =>
+                      updateAudioTrack({ role: e.target.value as AudioTrackRole })
+                    }
+                  >
+                    <option value="music">Music</option>
+                    <option value="voiceover">Voiceover</option>
+                    <option value="sfx">SFX</option>
+                  </select>
+                </label>
+                <label>
+                  Source audio level {Math.round(project.volume * 100)}%
+                  <input
+                    aria-label="Source audio level"
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    disabled={media?.kind !== "video"}
+                    value={project.volume}
+                    onChange={(e) =>
+                      replaceProject((current) => ({
+                        ...current,
+                        volume: Number(e.target.value),
+                      }))
+                    }
+                  />
+                </label>
+                <label className="toggleLabel">
+                  <input
+                    aria-label="Source audio muted"
+                    type="checkbox"
+                    disabled={media?.kind !== "video"}
+                    checked={project.muted}
+                    onChange={(e) =>
+                      replaceProject((current) => ({
+                        ...current,
+                        muted: e.target.checked,
+                      }))
+                    }
+                  />
+                  Mute source audio
+                </label>
+                <label className="toggleLabel">
+                  <input
+                    aria-label="Normalize audio track"
+                    type="checkbox"
+                    checked={audioTrack.normalizeEnabled}
+                    disabled={audioTrack.measuredPeak === null || audioTrack.measuredPeak <= 0.0001}
+                    onChange={(e) =>
+                      updateAudioTrack({ normalizeEnabled: e.target.checked })
+                    }
+                  />
+                  Normalize track peak
+                </label>
+                <label>
+                  Normalize target {Math.round(audioTrack.normalizeTarget * 100)}%
+                  <input
+                    aria-label="Normalize target"
+                    type="range"
+                    min={0.1}
+                    max={1}
+                    step={0.05}
+                    disabled={!audioTrack.normalizeEnabled}
+                    value={audioTrack.normalizeTarget}
+                    onChange={(e) =>
+                      updateAudioTrack({ normalizeTarget: Number(e.target.value) })
+                    }
+                  />
+                </label>
+                <small data-testid="audio-peak">
+                  {audioTrack.measuredPeak === null
+                    ? "Peak unavailable"
+                    : `Measured peak ${Math.round(audioTrack.measuredPeak * 100)}% · normalization ×${audioNormalizationGain(audioTrack).toFixed(2)}`}
+                </small>
+              </div>
               <label>
                 Start
                 <input
@@ -6263,7 +6423,7 @@ export default function PhaseOneEditor() {
                     aria-label="Automatic music ducking"
                     type="checkbox"
                     checked={audioTrack.duckingEnabled}
-                    disabled={!captions?.cues.length}
+                    disabled={!captions?.cues.length || audioTrack.role !== "music"}
                     onChange={(e) => updateAudioTrack({ duckingEnabled: e.target.checked })}
                   />
                   Duck music under speech
@@ -6283,7 +6443,9 @@ export default function PhaseOneEditor() {
                 </label>
                 <small>
                   {captions?.cues.length
-                    ? `Music drops to ${Math.round(audioTrack.duckingGain * 100)}% while captioned speech is active.`
+                    ? audioTrack.role === "music"
+                      ? `Music drops to ${Math.round(audioTrack.duckingGain * 100)}% while captioned speech is active.`
+                      : "Set the track role to Music to enable automatic ducking."
                     : "Generate captions first to detect speech ranges."}
                 </small>
               </div>

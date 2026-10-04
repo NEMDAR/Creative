@@ -43,6 +43,10 @@ export type PersistableAudioTrack = {
   fadeOut: number;
   duckingEnabled: boolean;
   duckingGain: number;
+  role: "music" | "voiceover" | "sfx";
+  normalizeEnabled: boolean;
+  normalizeTarget: number;
+  measuredPeak: number | null;
   generation?: AssetGenerationMetadata;
   blob: Blob;
 };

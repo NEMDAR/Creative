@@ -37,6 +37,38 @@ function createSilentWav(seconds = 2, sampleRate = 8000) {
   return buffer;
 }
 
+function createToneWav(
+  seconds = 2,
+  amplitude = 0.25,
+  sampleRate = 8000,
+  frequency = 440
+) {
+  const samples = Math.max(1, Math.floor(seconds * sampleRate));
+  const dataSize = samples * 2;
+  const buffer = Buffer.alloc(44 + dataSize);
+  buffer.write("RIFF", 0);
+  buffer.writeUInt32LE(36 + dataSize, 4);
+  buffer.write("WAVE", 8);
+  buffer.write("fmt ", 12);
+  buffer.writeUInt32LE(16, 16);
+  buffer.writeUInt16LE(1, 20);
+  buffer.writeUInt16LE(1, 22);
+  buffer.writeUInt32LE(sampleRate, 24);
+  buffer.writeUInt32LE(sampleRate * 2, 28);
+  buffer.writeUInt16LE(2, 32);
+  buffer.writeUInt16LE(16, 34);
+  buffer.write("data", 36);
+  buffer.writeUInt32LE(dataSize, 40);
+  for (let index = 0; index < samples; index += 1) {
+    const value = Math.sin((2 * Math.PI * frequency * index) / sampleRate);
+    buffer.writeInt16LE(
+      Math.round(value * Math.min(1, Math.max(0, amplitude)) * 32767),
+      44 + index * 2
+    );
+  }
+  return buffer;
+}
+
 test("P1 image creative can be edited, saved, exported and restored", async ({ page }) => {
   await page.goto("/");
 
@@ -1834,4 +1866,49 @@ test("P6 color controls and LUT preset are non-destructive and persist", async (
   await expect(page.getByLabel("Clip LUT")).toHaveValue("mono");
   await expect(page.locator("#creative-image")).toHaveCSS("filter", /grayscale\(1\)/);
   await expect(page.locator(".assetCard strong")).toHaveText("grade-source.png");
+});
+
+test("P6 audio mix normalizes measured peak and persists source track fades and role", async ({ page }) => {
+  await page.goto("/");
+
+  await page.locator('input[accept="video/*,image/*"]').setInputFiles({
+    name: "mix-source.webm",
+    mimeType: "video/webm",
+    buffer: WEBM_CLIP,
+  });
+  await expect(page.getByTestId("timeline-clip")).toHaveCount(1);
+
+  await page.locator('input[accept="audio/*"]').setInputFiles({
+    name: "music-tone.wav",
+    mimeType: "audio/wav",
+    buffer: createToneWav(2, 0.25),
+  });
+
+  await expect(page.getByTestId("audio-inspector")).toBeVisible();
+  await expect(page.getByTestId("audio-peak")).toContainText("Measured peak 25", { timeout: 5_000 });
+
+  await page.getByLabel("Source audio level").fill("0.5");
+  await page.getByLabel("Audio track role").selectOption("music");
+  await page.getByLabel("Normalize audio track").check();
+  await page.getByLabel("Normalize target").fill("0.5");
+  await page.getByLabel("Audio gain").fill("0.4");
+  await page.getByLabel("Audio fade in").fill("0.1");
+  await page.getByLabel("Audio fade out").fill("0.1");
+
+  const audio = page.locator("audio");
+  await expect(audio).toHaveAttribute("data-track-role", "music");
+  await expect(audio).toHaveAttribute("data-normalization-gain", "2.000");
+  await expect(page.getByTestId("audio-peak")).toContainText("normalization ×2.00");
+
+  await expect(page.getByTestId("save-state")).toHaveText("Saved", { timeout: 5_000 });
+  await page.reload();
+
+  await expect(page.getByLabel("Source audio level")).toHaveValue("0.5");
+  await expect(page.getByLabel("Audio track role")).toHaveValue("music");
+  await expect(page.getByLabel("Normalize audio track")).toBeChecked();
+  await expect(page.getByLabel("Normalize target")).toHaveValue("0.5");
+  await expect(page.getByLabel("Audio gain")).toHaveValue("0.4");
+  await expect(page.getByLabel("Audio fade in")).toHaveValue("0.1");
+  await expect(page.getByLabel("Audio fade out")).toHaveValue("0.1");
+  await expect(page.locator("audio")).toHaveAttribute("data-normalization-gain", "2.000");
 });
