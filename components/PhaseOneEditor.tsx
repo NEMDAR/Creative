@@ -18,6 +18,7 @@ import { runBrandGuardian } from "../lib/marketing/guardian";
 import { EMPTY_MARKETING_BRIEF, normalizeMarketingBrief, validateMarketingBrief, type MarketingBrief, type MarketingLanguage, type MarketingPlatform } from "../lib/editor/marketing";
 import { createOverlayKeyframe, deleteOverlayKeyframe, resolveOverlayAnimation, upsertOverlayKeyframe } from "../lib/editor/keyframes";
 import { applyMotionPreset, MOTION_PRESETS, type MotionPresetId } from "../lib/editor/motion-presets";
+import { applyMotionComponent, captureMotionComponent, type MotionComponent } from "../lib/editor/motion-components";
 import { canvasCompositeOperation, normalizeOverlayBlendMode, normalizeOverlayMask, overlayClipPath } from "../lib/editor/compositing";
 import type { ServerRenderManifest } from "../lib/render/server-types";
 
@@ -621,6 +622,8 @@ export default function PhaseOneEditor() {
   const [commentDraft, setCommentDraft] = useState("");
   const [approval, setApproval] = useState<ProjectApproval>(initialApproval);
   const [approvalNote, setApprovalNote] = useState("");
+  const [motionComponents, setMotionComponents] = useState<MotionComponent[]>([]);
+  const [motionComponentName, setMotionComponentName] = useState("");
   const [storageHydrated, setStorageHydrated] = useState(false);
   const autosaveTimerRef = useRef<number | null>(null);
   const brandAutosaveTimerRef = useRef<number | null>(null);
@@ -1334,6 +1337,8 @@ export default function PhaseOneEditor() {
     setCommentDraft("");
     setApproval(initialApproval);
     setApprovalNote("");
+    setMotionComponents([]);
+    setMotionComponentName("");
     setCaptionLanguage("auto");
     setCaptionState("idle");
     setSelectedCaptionId(null);
@@ -1373,6 +1378,7 @@ export default function PhaseOneEditor() {
           selectedOverlayId: firstTextOverlay?.id ?? null,
           reviewComments: [],
           approval: initialApproval,
+          motionComponents: [],
         });
         setLastSavedAt(savedAt);
         setSaveState("saved");
@@ -3114,6 +3120,44 @@ export default function PhaseOneEditor() {
     setSelectedKeyframeId(nextSelected.keyframes?.[0]?.id ?? null);
   }
 
+  function saveSelectedMotionComponent() {
+    if (!selected) return;
+    const component = captureMotionComponent(selected, motionComponentName);
+    if (!component) return;
+
+    setMotionComponents((current) => [component, ...current]);
+    setMotionComponentName("");
+  }
+
+  function applySavedMotionComponent(component: MotionComponent) {
+    if (!selected) return;
+    const startTime = getOverlayStart(selected);
+    const rawEnd = getOverlayEnd(selected);
+    const endTime = Number.isFinite(rawEnd)
+      ? Math.min(rawEnd, timeline.duration || rawEnd)
+      : Math.max(startTime + component.sourceDuration, timeline.duration || startTime + component.sourceDuration);
+    const nextSelected = applyMotionComponent(
+      selected,
+      component,
+      startTime,
+      endTime
+    );
+
+    replaceProject((current) => ({
+      ...current,
+      overlays: current.overlays.map((overlay) =>
+        overlay.id === selected.id ? nextSelected : overlay
+      ),
+    }));
+    setSelectedKeyframeId(nextSelected.keyframes?.[0]?.id ?? null);
+  }
+
+  function deleteMotionComponent(componentId: string) {
+    setMotionComponents((current) =>
+      current.filter((component) => component.id !== componentId)
+    );
+  }
+
   function deleteSelected() {
     if (!selectedId) return;
     replaceProject((p) => ({ ...p, overlays: p.overlays.filter((o) => o.id !== selectedId) }));
@@ -3343,6 +3387,7 @@ export default function PhaseOneEditor() {
       selectedOverlayId: selectedId,
       reviewComments,
       approval,
+      motionComponents,
     };
   }
 
@@ -3459,6 +3504,8 @@ export default function PhaseOneEditor() {
     setCommentDraft("");
     setApproval(state.approval ?? initialApproval);
     setApprovalNote("");
+    setMotionComponents(state.motionComponents ?? []);
+    setMotionComponentName("");
 
     const clips = state.timeline.tracks[0]?.clips ?? [];
     const selectedClip =
@@ -3579,6 +3626,7 @@ export default function PhaseOneEditor() {
       selectedOverlayId: state.selectedOverlayId,
       reviewComments: state.reviewComments ?? [],
       approval: state.approval ?? initialApproval,
+      motionComponents: state.motionComponents ?? [],
     };
   }
 
@@ -3651,6 +3699,7 @@ export default function PhaseOneEditor() {
       languageVariants.length > 0 ||
       campaignExperiments.length > 0 ||
       reviewComments.length > 0 ||
+      motionComponents.length > 0 ||
       Boolean(marketingBrief.product || marketingBrief.audience || marketingBrief.objective || marketingBrief.cta);
     if (!hasMeaningfulState) return;
 
@@ -3691,6 +3740,7 @@ export default function PhaseOneEditor() {
     project,
     mediaItems,
     timeline.tracks,
+    timeline.playhead,
     audioTrack,
     captions,
     captionStyle,
@@ -3703,6 +3753,7 @@ export default function PhaseOneEditor() {
     campaignExperiments,
     reviewComments,
     approval,
+    motionComponents,
     timelineZoom,
     snapEnabled,
   ]);
@@ -5748,7 +5799,7 @@ export default function PhaseOneEditor() {
               >
                 <span>
                   <strong>{snapshot.projectName}</strong>
-                  <small>{snapshot.reason === "manual" ? "Manual" : "Auto"} · {snapshot.mediaCount} asset{snapshot.mediaCount === 1 ? "" : "s"} · {snapshot.commentCount} comment{snapshot.commentCount === 1 ? "" : "s"} · {snapshot.approvalStatus.replaceAll("_", " ")}</small>
+                  <small>{snapshot.reason === "manual" ? "Manual" : "Auto"} · {snapshot.mediaCount} asset{snapshot.mediaCount === 1 ? "" : "s"} · {snapshot.commentCount} comment{snapshot.commentCount === 1 ? "" : "s"} · {snapshot.motionComponentCount} motion component{snapshot.motionComponentCount === 1 ? "" : "s"} · {snapshot.approvalStatus.replaceAll("_", " ")}</small>
                 </span>
                 <time>
                   {new Date(snapshot.savedAt).toLocaleTimeString([], {
@@ -5923,6 +5974,60 @@ export default function PhaseOneEditor() {
                     <strong>{preset.label}</strong>
                     <small>{preset.description}</small>
                   </button>
+                ))}
+              </div>
+              <div className="providerPanel" data-testid="motion-component-library">
+                <label>
+                  Component name
+                  <input
+                    aria-label="Motion component name"
+                    placeholder="e.g. Brand CTA Pop"
+                    value={motionComponentName}
+                    onChange={(event) => setMotionComponentName(event.target.value)}
+                  />
+                </label>
+                <button
+                  type="button"
+                  className="toolButton"
+                  aria-label="Save motion component"
+                  disabled={(selected.keyframes?.length ?? 0) < 2}
+                  onClick={saveSelectedMotionComponent}
+                >
+                  Save current motion
+                </button>
+                {motionComponents.length === 0 && (
+                  <p className="hint">No reusable motion components yet.</p>
+                )}
+                {motionComponents.map((component) => (
+                  <div
+                    className="generationRecord"
+                    data-testid="motion-component"
+                    key={component.id}
+                  >
+                    <div>
+                      <strong>{component.name}</strong>
+                      <span>{component.frames.length} frames</span>
+                    </div>
+                    <small>
+                      {component.sourceKind} · {component.sourceDuration.toFixed(2)}s source motion
+                    </small>
+                    <div className="assetActions">
+                      <button
+                        type="button"
+                        aria-label={`Apply motion component ${component.name}`}
+                        onClick={() => applySavedMotionComponent(component)}
+                      >
+                        Apply
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Delete motion component ${component.name}`}
+                        onClick={() => deleteMotionComponent(component.id)}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
                 ))}
               </div>
               <button

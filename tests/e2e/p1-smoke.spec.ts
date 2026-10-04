@@ -2080,3 +2080,62 @@ test("P6 project approval is gated by open comments and versioned", async ({ pag
   await expect(page.getByTestId("approval-status")).toHaveText("approved");
   await expect(page.getByTestId("approval-current-note")).toHaveText("Approved after CTA review.");
 });
+
+test("P6 reusable motion components can be captured applied and persisted", async ({ page }) => {
+  await page.route("**/api/proxy", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "image/png",
+      headers: {
+        "x-nemdar-proxy-cache-key": "motion-component-proxy",
+        "x-nemdar-source-bytes": String(PNG_1X1.length),
+        "x-nemdar-proxy-bytes": String(PNG_1X1.length),
+      },
+      body: PNG_1X1,
+    });
+  });
+
+  await page.goto("/");
+  await page.locator('input[accept="video/*,image/*"]').setInputFiles({
+    name: "motion-component-source.png",
+    mimeType: "image/png",
+    buffer: PNG_1X1,
+  });
+
+  await page.getByRole("button", { name: "+ Text", exact: true }).click();
+  const textEditor = page.locator("label").filter({ hasText: /^Text/ }).locator("textarea");
+  await textEditor.fill("Motion source");
+  await page.getByTestId("motion-preset-grid").getByRole("button", { name: /^Slide Up/ }).click();
+  await expect(page.getByTestId("overlay-keyframe")).toHaveCount(2);
+
+  await page.getByLabel("Motion component name").fill("CTA Slide");
+  await page.getByRole("button", { name: "Save motion component" }).click();
+  const component = page.getByTestId("motion-component").filter({ hasText: "CTA Slide" });
+  await expect(component).toBeVisible();
+  await expect(component).toContainText("2 frames");
+
+  await page.getByRole("button", { name: "+ Text", exact: true }).click();
+  await textEditor.fill("Motion target");
+  await expect(page.getByTestId("overlay-keyframe")).toHaveCount(0);
+
+  await component.getByRole("button", { name: "Apply motion component CTA Slide" }).click();
+  await expect(page.getByTestId("overlay-keyframe")).toHaveCount(2);
+  await page.getByTestId("overlay-keyframe").first().click();
+  await expect(page.getByLabel("Keyframe opacity")).toHaveValue("0");
+  await page.getByTestId("overlay-keyframe").nth(1).click();
+  await expect(page.getByLabel("Keyframe opacity")).toHaveValue("1");
+
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Save draft" }).click();
+  const manualVersion = page
+    .getByTestId("snapshot-item")
+    .filter({ hasText: "Manual" })
+    .first();
+  await expect(manualVersion).toContainText("1 motion component");
+
+  await page.reload();
+  await expect(page.getByTestId("motion-component").filter({ hasText: "CTA Slide" })).toBeVisible();
+  const restoredTarget = page.locator(".stage .overlay").filter({ hasText: "Motion target" });
+  await restoredTarget.click();
+  await expect(page.getByTestId("overlay-keyframe")).toHaveCount(2);
+});

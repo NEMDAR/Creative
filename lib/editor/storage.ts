@@ -7,6 +7,7 @@ import type { MarketingBrief } from "./marketing";
 import type { CampaignVariant } from "../marketing/variants";
 import type { CampaignExperiment, CampaignLanguageVariant } from "../marketing/experiments";
 import type { CreatorProject } from "./types";
+import type { MotionComponent } from "./motion-components";
 
 export type PersistedSourceMedia = {
   kind: "video" | "image";
@@ -93,6 +94,7 @@ export type PhaseTwoSaveInput = {
   selectedOverlayId: string | null;
   reviewComments: ReviewComment[];
   approval: ProjectApproval;
+  motionComponents: MotionComponent[];
 };
 
 type PersistedMediaItem = Omit<PersistableMediaItem, "blob" | "proxyBlob">;
@@ -118,6 +120,7 @@ type PersistedPhaseTwoState = {
   selectedOverlayId: string | null;
   reviewComments: ReviewComment[];
   approval: ProjectApproval;
+  motionComponents: MotionComponent[];
 };
 
 export type PhaseTwoDraft = PersistedPhaseTwoState & {
@@ -146,6 +149,7 @@ export type PhaseTwoSnapshotSummary = {
   duration: number;
   commentCount: number;
   approvalStatus: ApprovalStatus;
+  motionComponentCount: number;
 };
 
 type AssetRecord = {
@@ -232,6 +236,7 @@ function toPersistedPhaseTwoState(input: PhaseTwoSaveInput): PersistedPhaseTwoSt
     selectedOverlayId: input.selectedOverlayId,
     reviewComments: input.reviewComments ?? [],
     approval: input.approval ?? { status: "draft", updatedAt: null, note: "" },
+    motionComponents: input.motionComponents ?? [],
   };
 }
 
@@ -332,6 +337,7 @@ async function hydratePhaseTwoState(
     selectedOverlayId: state.selectedOverlayId,
     reviewComments: state.reviewComments ?? [],
     approval: state.approval ?? { status: "draft", updatedAt: null, note: "" },
+    motionComponents: state.motionComponents ?? [],
     savedAt,
     snapshotId,
     snapshotReason,
@@ -497,6 +503,7 @@ export async function savePhaseTwoSnapshot(
       duration: input.timeline.duration,
       commentCount: input.reviewComments?.length ?? 0,
       approvalStatus: input.approval?.status ?? "draft",
+      motionComponentCount: input.motionComponents?.length ?? 0,
     };
   } finally {
     db.close();
@@ -544,6 +551,7 @@ export async function listPhaseTwoSnapshots(): Promise<PhaseTwoSnapshotSummary[]
         duration: snapshot.timeline.duration,
         commentCount: snapshot.reviewComments?.length ?? 0,
         approvalStatus: snapshot.approval?.status ?? "draft",
+        motionComponentCount: snapshot.motionComponents?.length ?? 0,
       }));
   } finally {
     db.close();
