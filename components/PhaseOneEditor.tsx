@@ -4,7 +4,7 @@ import { ChangeEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointe
 import { CAPTION_STYLE_PRESETS, captionCueAtTime, cloneCaptionStylePreset, normalizeCaptionStyle, normalizeCaptionTrack, type CaptionCue, type CaptionEmphasis, type CaptionLanguage, type CaptionPosition, type CaptionPresetId, type CaptionStyleConfig, type CaptionTrack } from "../lib/editor/captions";
 import { brandCaptionDefaults, DEFAULT_BRAND_KIT, normalizeBrandKit, type BrandKit } from "../lib/editor/brand-kit";
 import type { CreatorProject, Overlay, OverlayBlendMode, OverlayEasing, OverlayKeyframe, OverlayMaskShape, RatioKey, TextOverlay } from "../lib/editor/types";
-import { listPhaseTwoSnapshots, loadBrandKit, loadPhaseOneDraft, loadPhaseTwoDraft, loadPhaseTwoSnapshot, saveBrandKit, savePhaseTwoDraft, savePhaseTwoSnapshot, type HydratedPhaseTwoState, type PhaseTwoSaveInput, type PhaseTwoSnapshotSummary } from "../lib/editor/storage";
+import { listPhaseTwoSnapshots, loadBrandKit, loadPhaseOneDraft, loadPhaseTwoDraft, loadPhaseTwoSnapshot, saveBrandKit, savePhaseTwoDraft, savePhaseTwoSnapshot, type HydratedPhaseTwoState, type PhaseTwoSaveInput, type PhaseTwoSnapshotSummary, type ReviewComment } from "../lib/editor/storage";
 import { buildSequentialTimeline, createEmptyTimeline, deleteTimelineClip, duplicateTimelineClip, formatTimelineTime, getMaxTransitionDuration, getNextTimelineClip, getTransitionVisualState, isCrossfadeEligible, moveTimelineClip, normalizeClipChroma, normalizeClipColorGrade, removeTimelineRange, resolveTimelineTime, setTimelineClipTransition, setTimelinePlayhead, splitTimelineClip, timelineTimeForClip, trimTimelineClip, updateTimelineClipChroma, updateTimelineClipColorGrade, updateTimelineClipTransform, type ClipChromaKey, type ClipFitMode, type ClipLutPreset, type TimelineClip, type TimelineState, type TransitionType } from "../lib/editor/timeline";
 import { instantiateMarketingTemplate, MARKETING_TEMPLATES, type MarketingTemplateId } from "../lib/editor/templates";
 import { compileEditorCommand, type EditorCommandPlan } from "../lib/editor/command-bar";
@@ -611,6 +611,8 @@ export default function PhaseOneEditor() {
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
   const [snapshots, setSnapshots] = useState<PhaseTwoSnapshotSummary[]>([]);
+  const [reviewComments, setReviewComments] = useState<ReviewComment[]>([]);
+  const [commentDraft, setCommentDraft] = useState("");
   const [storageHydrated, setStorageHydrated] = useState(false);
   const autosaveTimerRef = useRef<number | null>(null);
   const brandAutosaveTimerRef = useRef<number | null>(null);
@@ -1320,6 +1322,8 @@ export default function PhaseOneEditor() {
     setCampaignVariants([]);
     setLanguageVariants([]);
     setCampaignExperiments([]);
+    setReviewComments([]);
+    setCommentDraft("");
     setCaptionLanguage("auto");
     setCaptionState("idle");
     setSelectedCaptionId(null);
@@ -1357,6 +1361,7 @@ export default function PhaseOneEditor() {
           snapEnabled: true,
           selectedClipId: null,
           selectedOverlayId: firstTextOverlay?.id ?? null,
+          reviewComments: [],
         });
         setLastSavedAt(savedAt);
         setSaveState("saved");
@@ -3325,12 +3330,44 @@ export default function PhaseOneEditor() {
       snapEnabled,
       selectedClipId,
       selectedOverlayId: selectedId,
+      reviewComments,
     };
   }
 
   async function refreshSnapshots() {
     const nextSnapshots = await listPhaseTwoSnapshots();
     setSnapshots(nextSnapshots);
+  }
+
+  function addReviewComment() {
+    const body = commentDraft.trim();
+    if (!body) return;
+
+    const timelineTime = Math.max(
+      0,
+      Math.min(timeline.playhead, Math.max(0, timeline.duration))
+    );
+    setReviewComments((current) => [
+      ...current,
+      {
+        id: crypto.randomUUID(),
+        body,
+        createdAt: Date.now(),
+        timelineTime,
+        resolved: false,
+      },
+    ]);
+    setCommentDraft("");
+  }
+
+  function toggleReviewComment(commentId: string) {
+    setReviewComments((current) =>
+      current.map((comment) =>
+        comment.id === commentId
+          ? { ...comment, resolved: !comment.resolved }
+          : comment
+      )
+    );
   }
 
   function restorePhaseTwoState(state: HydratedPhaseTwoState) {
@@ -3381,6 +3418,8 @@ export default function PhaseOneEditor() {
     setSelectedCaptionId(state.captions?.cues[0]?.id ?? null);
     setTimelineZoom(state.timelineZoom ?? 1);
     setSnapEnabled(state.snapEnabled ?? true);
+    setReviewComments(state.reviewComments ?? []);
+    setCommentDraft("");
 
     const clips = state.timeline.tracks[0]?.clips ?? [];
     const selectedClip =
@@ -3499,6 +3538,7 @@ export default function PhaseOneEditor() {
       snapEnabled: state.snapEnabled,
       selectedClipId: state.selectedClipId,
       selectedOverlayId: state.selectedOverlayId,
+      reviewComments: state.reviewComments ?? [],
     };
   }
 
@@ -3570,6 +3610,7 @@ export default function PhaseOneEditor() {
       campaignVariants.length > 0 ||
       languageVariants.length > 0 ||
       campaignExperiments.length > 0 ||
+      reviewComments.length > 0 ||
       Boolean(marketingBrief.product || marketingBrief.audience || marketingBrief.objective || marketingBrief.cta);
     if (!hasMeaningfulState) return;
 
@@ -3620,6 +3661,7 @@ export default function PhaseOneEditor() {
     campaignVariants,
     languageVariants,
     campaignExperiments,
+    reviewComments,
     timelineZoom,
     snapEnabled,
   ]);
@@ -5665,7 +5707,7 @@ export default function PhaseOneEditor() {
               >
                 <span>
                   <strong>{snapshot.projectName}</strong>
-                  <small>{snapshot.reason === "manual" ? "Manual" : "Auto"} · {snapshot.mediaCount} asset{snapshot.mediaCount === 1 ? "" : "s"}</small>
+                  <small>{snapshot.reason === "manual" ? "Manual" : "Auto"} · {snapshot.mediaCount} asset{snapshot.mediaCount === 1 ? "" : "s"} · {snapshot.commentCount} comment{snapshot.commentCount === 1 ? "" : "s"}</small>
                 </span>
                 <time>
                   {new Date(snapshot.savedAt).toLocaleTimeString([], {
@@ -5676,6 +5718,74 @@ export default function PhaseOneEditor() {
               </button>
             ))}
           </div>
+
+          <h2>Review comments</h2>
+          <div className="providerPanel" data-testid="review-comments">
+            <label>
+              Comment at {formatTimelineTime(timeline.playhead)}
+              <textarea
+                aria-label="Review comment"
+                rows={3}
+                placeholder="Add a review note for this timecode…"
+                value={commentDraft}
+                onChange={(event) => setCommentDraft(event.target.value)}
+              />
+            </label>
+            <button
+              type="button"
+              className="primary"
+              disabled={!commentDraft.trim()}
+              onClick={addReviewComment}
+            >
+              Add comment
+            </button>
+            <div className="providerPanelHeader">
+              <strong>{reviewComments.filter((comment) => !comment.resolved).length} open</strong>
+              <span>{reviewComments.length} total</span>
+            </div>
+            {reviewComments.length === 0 && (
+              <p className="hint">No review comments yet.</p>
+            )}
+            {[...reviewComments]
+              .sort((a, b) => b.createdAt - a.createdAt)
+              .map((comment) => (
+                <div
+                  className="generationRecord"
+                  key={comment.id}
+                  data-testid="review-comment"
+                  data-resolved={comment.resolved ? "true" : "false"}
+                >
+                  <div>
+                    <button
+                      type="button"
+                      className="ghost"
+                      aria-label={`Jump to comment at ${formatTimelineTime(comment.timelineTime)}`}
+                      onClick={() => seekTimelineTo(comment.timelineTime, false)}
+                    >
+                      {formatTimelineTime(comment.timelineTime)}
+                    </button>
+                    <span>{comment.resolved ? "Resolved" : "Open"}</span>
+                  </div>
+                  <strong>{comment.body}</strong>
+                  <small>
+                    {new Date(comment.createdAt).toLocaleTimeString([], {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </small>
+                  <div className="assetActions">
+                    <button
+                      type="button"
+                      aria-label={comment.resolved ? "Reopen comment" : "Resolve comment"}
+                      onClick={() => toggleReviewComment(comment.id)}
+                    >
+                      {comment.resolved ? "Reopen" : "Resolve"}
+                    </button>
+                  </div>
+                </div>
+              ))}
+          </div>
+
           <h2>Motion</h2>
           {!selected && <p className="hint">Select a text or logo overlay to animate it.</p>}
           {selected && (

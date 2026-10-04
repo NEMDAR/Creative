@@ -1947,3 +1947,71 @@ test("P6 proxy media swaps preview source and persists with local draft", async 
   await expect(page.locator("#creative-image")).toHaveAttribute("data-preview-source", "proxy");
   await expect(page.getByTestId("asset-proxy-meta")).toContainText("Proxy preview");
 });
+
+test("P6 review comments anchor to timecode resolve and restore with versions", async ({ page }) => {
+  await page.route("**/api/proxy", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "image/png",
+      headers: {
+        "x-nemdar-proxy-cache-key": "review-proxy",
+        "x-nemdar-source-bytes": String(PNG_1X1.length),
+        "x-nemdar-proxy-bytes": String(PNG_1X1.length),
+      },
+      body: PNG_1X1,
+    });
+  });
+
+  await page.goto("/");
+  await page.locator('input[accept="video/*,image/*"]').setInputFiles({
+    name: "review-source.png",
+    mimeType: "image/png",
+    buffer: PNG_1X1,
+  });
+
+  await page.getByRole("textbox", { name: "Name", exact: true }).fill("Review Version");
+  const surface = page.getByTestId("timeline-surface");
+  await surface.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    element.dispatchEvent(
+      new MouseEvent("click", {
+        bubbles: true,
+        clientX: rect.left + rect.width * 0.6,
+        clientY: rect.top + 1,
+      })
+    );
+  });
+  await expect(page.getByTestId("timeline-clock")).toHaveText("00:03.0");
+
+  await page.getByLabel("Review comment").fill("Lift the logo above the safe area.");
+  await page.getByRole("button", { name: "Add comment" }).click();
+
+  const comment = page.getByTestId("review-comment").filter({
+    hasText: "Lift the logo above the safe area.",
+  });
+  await expect(comment).toBeVisible();
+  await expect(comment).toHaveAttribute("data-resolved", "false");
+  await expect(comment.getByRole("button", { name: "Jump to comment at 00:03.0" })).toBeVisible();
+
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Save draft" }).click();
+
+  const manualVersion = page
+    .getByTestId("snapshot-item")
+    .filter({ hasText: "Review Version" })
+    .filter({ hasText: "Manual" })
+    .first();
+  await expect(manualVersion).toContainText("1 comment");
+
+  await comment.getByRole("button", { name: "Resolve comment" }).click();
+  await expect(comment).toHaveAttribute("data-resolved", "true");
+  await expect(page.getByTestId("save-state")).toHaveText("Saved", { timeout: 5_000 });
+
+  await manualVersion.click();
+  await expect(comment).toHaveAttribute("data-resolved", "false");
+  await expect(page.getByRole("textbox", { name: "Name", exact: true })).toHaveValue("Review Version");
+
+  await page.reload();
+  await expect(page.getByTestId("review-comment")).toContainText("Lift the logo above the safe area.");
+  await expect(page.getByTestId("review-comment")).toHaveAttribute("data-resolved", "false");
+});

@@ -38,6 +38,14 @@ export type PersistableMediaItem = {
   blob: Blob;
 };
 
+export type ReviewComment = {
+  id: string;
+  body: string;
+  createdAt: number;
+  timelineTime: number;
+  resolved: boolean;
+};
+
 export type PersistableAudioTrack = {
   id: string;
   name: string;
@@ -75,6 +83,7 @@ export type PhaseTwoSaveInput = {
   snapEnabled: boolean;
   selectedClipId: string | null;
   selectedOverlayId: string | null;
+  reviewComments: ReviewComment[];
 };
 
 type PersistedMediaItem = Omit<PersistableMediaItem, "blob" | "proxyBlob">;
@@ -98,6 +107,7 @@ type PersistedPhaseTwoState = {
   snapEnabled: boolean;
   selectedClipId: string | null;
   selectedOverlayId: string | null;
+  reviewComments: ReviewComment[];
 };
 
 export type PhaseTwoDraft = PersistedPhaseTwoState & {
@@ -124,6 +134,7 @@ export type PhaseTwoSnapshotSummary = {
   projectName: string;
   mediaCount: number;
   duration: number;
+  commentCount: number;
 };
 
 type AssetRecord = {
@@ -208,6 +219,7 @@ function toPersistedPhaseTwoState(input: PhaseTwoSaveInput): PersistedPhaseTwoSt
     snapEnabled: input.snapEnabled,
     selectedClipId: input.selectedClipId,
     selectedOverlayId: input.selectedOverlayId,
+    reviewComments: input.reviewComments ?? [],
   };
 }
 
@@ -306,6 +318,7 @@ async function hydratePhaseTwoState(
     snapEnabled: state.snapEnabled,
     selectedClipId: state.selectedClipId,
     selectedOverlayId: state.selectedOverlayId,
+    reviewComments: state.reviewComments ?? [],
     savedAt,
     snapshotId,
     snapshotReason,
@@ -469,6 +482,7 @@ export async function savePhaseTwoSnapshot(
       projectName: input.project.name,
       mediaCount: input.mediaItems.length,
       duration: input.timeline.duration,
+      commentCount: input.reviewComments?.length ?? 0,
     };
   } finally {
     db.close();
@@ -514,6 +528,7 @@ export async function listPhaseTwoSnapshots(): Promise<PhaseTwoSnapshotSummary[]
         projectName: snapshot.project.name,
         mediaCount: snapshot.mediaItems.length,
         duration: snapshot.timeline.duration,
+        commentCount: snapshot.reviewComments?.length ?? 0,
       }));
   } finally {
     db.close();
