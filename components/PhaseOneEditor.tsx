@@ -8,7 +8,8 @@ import { listPhaseTwoSnapshots, loadBrandKit, loadPhaseOneDraft, loadPhaseTwoDra
 import { buildSequentialTimeline, createEmptyTimeline, deleteTimelineClip, duplicateTimelineClip, formatTimelineTime, getMaxTransitionDuration, getNextTimelineClip, getTransitionVisualState, isCrossfadeEligible, moveTimelineClip, removeTimelineRange, resolveTimelineTime, setTimelineClipTransition, setTimelinePlayhead, splitTimelineClip, timelineTimeForClip, trimTimelineClip, updateTimelineClipTransform, type ClipFitMode, type TimelineClip, type TimelineState, type TransitionType } from "../lib/editor/timeline";
 import { instantiateMarketingTemplate, MARKETING_TEMPLATES, type MarketingTemplateId } from "../lib/editor/templates";
 import { compileEditorCommand, type EditorCommandPlan } from "../lib/editor/command-bar";
-import type { ProviderCapability, ProviderDirectorySnapshot } from "../lib/providers/contracts";
+import type { ProviderCapability, ProviderDirectorySnapshot, ProviderArtifact } from "../lib/providers/contracts";
+import type { AssetGenerationMetadata } from "../lib/editor/assets";
 import type { ServerRenderManifest } from "../lib/render/server-types";
 
 const RATIOS: Record<RatioKey, { w: number; h: number }> = {
@@ -29,7 +30,7 @@ const initialProject: CreatorProject = {
   overlays: [],
 };
 
-type MediaItem = { id: string; kind: "video" | "image"; url: string; name: string; type: string; blob: Blob; duration: number };
+type MediaItem = { id: string; kind: "video" | "image"; url: string; name: string; type: string; blob: Blob; duration: number; generation?: AssetGenerationMetadata };
 type MediaState = MediaItem | null;
 type AudioTrackItem = { id: string; url: string; name: string; type: string; blob: Blob; duration: number; startTime: number; gain: number; fadeIn: number; fadeOut: number; duckingEnabled: boolean; duckingGain: number };
 type SilenceReviewRange = { id: string; startTime: number; endTime: number; duration: number; selected: boolean };
@@ -368,6 +369,9 @@ export default function PhaseOneEditor() {
   const [providerDirectory, setProviderDirectory] = useState<ProviderDirectorySnapshot | null>(null);
   const [providerState, setProviderState] = useState<"loading" | "ready" | "saving" | "error">("loading");
   const [providerError, setProviderError] = useState<string | null>(null);
+  const [imagePrompt, setImagePrompt] = useState("");
+  const [imageGenerationState, setImageGenerationState] = useState<"idle" | "generating" | "error">("idle");
+  const [imageGenerationError, setImageGenerationError] = useState<string | null>(null);
   const [captionLanguage, setCaptionLanguage] = useState<CaptionLanguage>("auto");
   const [captionState, setCaptionState] = useState<"idle" | "generating" | "ready" | "error">("idle");
   const [captionError, setCaptionError] = useState<string | null>(null);
@@ -1003,6 +1007,74 @@ export default function PhaseOneEditor() {
       setProviderState("error");
       setProviderError(
         error instanceof Error ? error.message : "Unable to change AI provider."
+      );
+    }
+  }
+
+  async function generateImageAsset() {
+    const prompt = imagePrompt.trim();
+    if (!prompt) {
+      setImageGenerationState("error");
+      setImageGenerationError("Write an image prompt first.");
+      return;
+    }
+
+    try {
+      setImageGenerationState("generating");
+      setImageGenerationError(null);
+      const response = await fetch("/api/generate/image", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          prompt,
+          aspectRatio: project.ratio,
+        }),
+      });
+      const payload = (await response.json()) as {
+        artifact?: ProviderArtifact;
+        prompt?: string;
+        estimatedCost?: number | null;
+        createdAt?: number;
+        error?: string;
+      };
+      if (!response.ok || !payload.artifact) {
+        throw new Error(payload.error || "Image generation failed.");
+      }
+
+      const artifact = payload.artifact;
+      const assetResponse = await fetch(artifact.url);
+      const blob = await assetResponse.blob();
+      const normalizedBlob =
+        blob.type === artifact.mimeType
+          ? blob
+          : blob.slice(0, blob.size, artifact.mimeType);
+      const url = createObjectUrl(normalizedBlob);
+      const item: MediaItem = {
+        id: crypto.randomUUID(),
+        kind: "image",
+        url,
+        name: `ai-${artifact.provider}-${Date.now()}.svg`,
+        type: artifact.mimeType,
+        blob: normalizedBlob,
+        duration: 5,
+        generation: {
+          provider: artifact.provider,
+          model: artifact.model,
+          prompt: payload.prompt ?? prompt,
+          createdAt: payload.createdAt ?? Date.now(),
+          estimatedCost: payload.estimatedCost ?? null,
+          operation: "generate",
+        },
+      };
+
+      setMediaItems((current) => [...current, item]);
+      setMedia(item);
+      setDuration(0);
+      setImageGenerationState("idle");
+    } catch (error) {
+      setImageGenerationState("error");
+      setImageGenerationError(
+        error instanceof Error ? error.message : "Unable to generate image."
       );
     }
   }
@@ -2959,6 +3031,11 @@ export default function PhaseOneEditor() {
               >
                 <span>{item.kind}</span>
                 <strong title={item.name}>{item.name}</strong>
+                {item.generation && (
+                  <small className="assetGeneration" data-testid="asset-generation-meta">
+                    AI · {item.generation.provider} · {item.generation.model}
+                  </small>
+                )}
                 <div className="assetActions">
                   <button
                     type="button"
@@ -3034,6 +3111,28 @@ export default function PhaseOneEditor() {
               </label>
             ))}
             {providerError && <p className="providerError">{providerError}</p>}
+          </div>
+
+          <h2>AI Image</h2>
+          <div className="imageGenerationPanel" data-testid="image-generation-panel">
+            <label>
+              Prompt
+              <textarea
+                aria-label="Image prompt"
+                value={imagePrompt}
+                placeholder="Describe the marketing image you want…"
+                onChange={(e) => setImagePrompt(e.target.value)}
+              />
+            </label>
+            <button
+              type="button"
+              className="toolButton"
+              onClick={() => void generateImageAsset()}
+              disabled={imageGenerationState === "generating" || providerState !== "ready"}
+            >
+              {imageGenerationState === "generating" ? "Generating…" : "Generate image"}
+            </button>
+            {imageGenerationError && <p className="providerError">{imageGenerationError}</p>}
           </div>
 
           <h2>Brand Kit</h2>

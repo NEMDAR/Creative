@@ -1,5 +1,6 @@
 import { normalizeCaptionStyle, type CaptionStyleConfig, type CaptionTrack } from "./captions";
 import { normalizeBrandKit, type BrandKit } from "./brand-kit";
+import type { AssetGenerationMetadata } from "./assets";
 import type { TimelineState } from "./timeline";
 import type { CreatorProject } from "./types";
 
@@ -23,6 +24,7 @@ export type PersistableMediaItem = {
   name: string;
   type: string;
   duration: number;
+  generation?: AssetGenerationMetadata;
   blob: Blob;
 };
 

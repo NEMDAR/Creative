@@ -1170,3 +1170,27 @@ test("P4 Provider Router swaps capabilities independently and persists runtime s
   await page.getByLabel("Image provider").selectOption("mock-fast");
   await expect(page.getByLabel("Image provider")).toHaveValue("mock-fast");
 });
+
+test("P4 image generation inserts provider-tagged asset into library and persists", async ({ page }) => {
+  await page.goto("/");
+
+  await expect(page.getByTestId("provider-panel")).toBeVisible();
+  await page.getByLabel("Image provider").selectOption("mock-quality");
+  await expect(page.getByLabel("Image provider")).toHaveValue("mock-quality");
+
+  await page.getByLabel("Image prompt").fill("Luxury UAE property launch at sunset");
+  await page.getByRole("button", { name: "Generate image" }).click();
+
+  await expect(page.locator(".assetCard")).toHaveCount(1);
+  await expect(page.getByTestId("asset-generation-meta")).toContainText("mock-quality");
+  await expect(page.getByTestId("asset-generation-meta")).toContainText("mock-image-quality");
+  await expect(page.locator("#creative-image")).toBeVisible();
+
+  const saveState = page.getByTestId("save-state");
+  await expect(saveState).toHaveText("Saved", { timeout: 5_000 });
+  await page.reload();
+
+  await expect(page.locator(".assetCard")).toHaveCount(1);
+  await expect(page.getByTestId("asset-generation-meta")).toContainText("mock-quality");
+  await expect(page.locator("#creative-image")).toBeVisible();
+});
