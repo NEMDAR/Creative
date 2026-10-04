@@ -2015,3 +2015,68 @@ test("P6 review comments anchor to timecode resolve and restore with versions", 
   await expect(page.getByTestId("review-comment")).toContainText("Lift the logo above the safe area.");
   await expect(page.getByTestId("review-comment")).toHaveAttribute("data-resolved", "false");
 });
+
+test("P6 project approval is gated by open comments and versioned", async ({ page }) => {
+  await page.route("**/api/proxy", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "image/png",
+      headers: {
+        "x-nemdar-proxy-cache-key": "approval-proxy",
+        "x-nemdar-source-bytes": String(PNG_1X1.length),
+        "x-nemdar-proxy-bytes": String(PNG_1X1.length),
+      },
+      body: PNG_1X1,
+    });
+  });
+
+  await page.goto("/");
+  await page.locator('input[accept="video/*,image/*"]').setInputFiles({
+    name: "approval-source.png",
+    mimeType: "image/png",
+    buffer: PNG_1X1,
+  });
+  await page.getByRole("textbox", { name: "Name", exact: true }).fill("Approval Version");
+
+  await page.getByLabel("Approval note").fill("Ready for stakeholder review.");
+  await page.getByRole("button", { name: "Send for review" }).click();
+  await expect(page.getByTestId("approval-status")).toHaveText("in review");
+  await expect(page.getByTestId("approval-current-note")).toHaveText("Ready for stakeholder review.");
+
+  await page.getByLabel("Review comment").fill("Move the CTA higher.");
+  await page.getByRole("button", { name: "Add comment" }).click();
+  await expect(page.getByTestId("approval-blocker")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Approve project" })).toBeDisabled();
+
+  await page.getByRole("button", { name: "Resolve comment" }).click();
+  await expect(page.getByRole("button", { name: "Approve project" })).toBeEnabled();
+
+  await page.getByLabel("Approval note").fill("Approved after CTA review.");
+  await page.getByRole("button", { name: "Approve project" }).click();
+  await expect(page.getByTestId("approval-status")).toHaveText("approved");
+  await expect(page.getByTestId("approval-current-note")).toHaveText("Approved after CTA review.");
+
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Save draft" }).click();
+
+  const approvedVersion = page
+    .getByTestId("snapshot-item")
+    .filter({ hasText: "Approval Version" })
+    .filter({ hasText: "Manual" })
+    .first();
+  await expect(approvedVersion).toContainText("approved");
+
+  await page.getByLabel("Review comment").fill("New issue found after approval.");
+  await page.getByRole("button", { name: "Add comment" }).click();
+  await expect(page.getByTestId("approval-status")).toHaveText("changes requested");
+  await expect(page.getByTestId("approval-current-note")).toContainText("new review comment");
+
+  await approvedVersion.click();
+  await expect(page.getByTestId("approval-status")).toHaveText("approved");
+  await expect(page.getByTestId("review-comment")).toHaveCount(1);
+  await expect(page.getByTestId("review-comment")).toHaveAttribute("data-resolved", "true");
+
+  await page.reload();
+  await expect(page.getByTestId("approval-status")).toHaveText("approved");
+  await expect(page.getByTestId("approval-current-note")).toHaveText("Approved after CTA review.");
+});

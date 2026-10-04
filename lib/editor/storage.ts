@@ -46,6 +46,14 @@ export type ReviewComment = {
   resolved: boolean;
 };
 
+export type ApprovalStatus = "draft" | "in_review" | "changes_requested" | "approved";
+
+export type ProjectApproval = {
+  status: ApprovalStatus;
+  updatedAt: number | null;
+  note: string;
+};
+
 export type PersistableAudioTrack = {
   id: string;
   name: string;
@@ -84,6 +92,7 @@ export type PhaseTwoSaveInput = {
   selectedClipId: string | null;
   selectedOverlayId: string | null;
   reviewComments: ReviewComment[];
+  approval: ProjectApproval;
 };
 
 type PersistedMediaItem = Omit<PersistableMediaItem, "blob" | "proxyBlob">;
@@ -108,6 +117,7 @@ type PersistedPhaseTwoState = {
   selectedClipId: string | null;
   selectedOverlayId: string | null;
   reviewComments: ReviewComment[];
+  approval: ProjectApproval;
 };
 
 export type PhaseTwoDraft = PersistedPhaseTwoState & {
@@ -135,6 +145,7 @@ export type PhaseTwoSnapshotSummary = {
   mediaCount: number;
   duration: number;
   commentCount: number;
+  approvalStatus: ApprovalStatus;
 };
 
 type AssetRecord = {
@@ -220,6 +231,7 @@ function toPersistedPhaseTwoState(input: PhaseTwoSaveInput): PersistedPhaseTwoSt
     selectedClipId: input.selectedClipId,
     selectedOverlayId: input.selectedOverlayId,
     reviewComments: input.reviewComments ?? [],
+    approval: input.approval ?? { status: "draft", updatedAt: null, note: "" },
   };
 }
 
@@ -319,6 +331,7 @@ async function hydratePhaseTwoState(
     selectedClipId: state.selectedClipId,
     selectedOverlayId: state.selectedOverlayId,
     reviewComments: state.reviewComments ?? [],
+    approval: state.approval ?? { status: "draft", updatedAt: null, note: "" },
     savedAt,
     snapshotId,
     snapshotReason,
@@ -483,6 +496,7 @@ export async function savePhaseTwoSnapshot(
       mediaCount: input.mediaItems.length,
       duration: input.timeline.duration,
       commentCount: input.reviewComments?.length ?? 0,
+      approvalStatus: input.approval?.status ?? "draft",
     };
   } finally {
     db.close();
@@ -529,6 +543,7 @@ export async function listPhaseTwoSnapshots(): Promise<PhaseTwoSnapshotSummary[]
         mediaCount: snapshot.mediaItems.length,
         duration: snapshot.timeline.duration,
         commentCount: snapshot.reviewComments?.length ?? 0,
+        approvalStatus: snapshot.approval?.status ?? "draft",
       }));
   } finally {
     db.close();

@@ -4,7 +4,7 @@ import { ChangeEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointe
 import { CAPTION_STYLE_PRESETS, captionCueAtTime, cloneCaptionStylePreset, normalizeCaptionStyle, normalizeCaptionTrack, type CaptionCue, type CaptionEmphasis, type CaptionLanguage, type CaptionPosition, type CaptionPresetId, type CaptionStyleConfig, type CaptionTrack } from "../lib/editor/captions";
 import { brandCaptionDefaults, DEFAULT_BRAND_KIT, normalizeBrandKit, type BrandKit } from "../lib/editor/brand-kit";
 import type { CreatorProject, Overlay, OverlayBlendMode, OverlayEasing, OverlayKeyframe, OverlayMaskShape, RatioKey, TextOverlay } from "../lib/editor/types";
-import { listPhaseTwoSnapshots, loadBrandKit, loadPhaseOneDraft, loadPhaseTwoDraft, loadPhaseTwoSnapshot, saveBrandKit, savePhaseTwoDraft, savePhaseTwoSnapshot, type HydratedPhaseTwoState, type PhaseTwoSaveInput, type PhaseTwoSnapshotSummary, type ReviewComment } from "../lib/editor/storage";
+import { listPhaseTwoSnapshots, loadBrandKit, loadPhaseOneDraft, loadPhaseTwoDraft, loadPhaseTwoSnapshot, saveBrandKit, savePhaseTwoDraft, savePhaseTwoSnapshot, type HydratedPhaseTwoState, type PhaseTwoSaveInput, type PhaseTwoSnapshotSummary, type ReviewComment, type ProjectApproval, type ApprovalStatus } from "../lib/editor/storage";
 import { buildSequentialTimeline, createEmptyTimeline, deleteTimelineClip, duplicateTimelineClip, formatTimelineTime, getMaxTransitionDuration, getNextTimelineClip, getTransitionVisualState, isCrossfadeEligible, moveTimelineClip, normalizeClipChroma, normalizeClipColorGrade, removeTimelineRange, resolveTimelineTime, setTimelineClipTransition, setTimelinePlayhead, splitTimelineClip, timelineTimeForClip, trimTimelineClip, updateTimelineClipChroma, updateTimelineClipColorGrade, updateTimelineClipTransform, type ClipChromaKey, type ClipFitMode, type ClipLutPreset, type TimelineClip, type TimelineState, type TransitionType } from "../lib/editor/timeline";
 import { instantiateMarketingTemplate, MARKETING_TEMPLATES, type MarketingTemplateId } from "../lib/editor/templates";
 import { compileEditorCommand, type EditorCommandPlan } from "../lib/editor/command-bar";
@@ -42,6 +42,12 @@ const MARKETING_LANGUAGES: Array<{ id: MarketingLanguage; label: string }> = [
   { id: "ar", label: "Arabic" },
   { id: "en", label: "English" },
 ];
+
+const initialApproval: ProjectApproval = {
+  status: "draft",
+  updatedAt: null,
+  note: "",
+};
 
 const initialProject: CreatorProject = {
   schemaVersion: 1,
@@ -613,6 +619,8 @@ export default function PhaseOneEditor() {
   const [snapshots, setSnapshots] = useState<PhaseTwoSnapshotSummary[]>([]);
   const [reviewComments, setReviewComments] = useState<ReviewComment[]>([]);
   const [commentDraft, setCommentDraft] = useState("");
+  const [approval, setApproval] = useState<ProjectApproval>(initialApproval);
+  const [approvalNote, setApprovalNote] = useState("");
   const [storageHydrated, setStorageHydrated] = useState(false);
   const autosaveTimerRef = useRef<number | null>(null);
   const brandAutosaveTimerRef = useRef<number | null>(null);
@@ -1324,6 +1332,8 @@ export default function PhaseOneEditor() {
     setCampaignExperiments([]);
     setReviewComments([]);
     setCommentDraft("");
+    setApproval(initialApproval);
+    setApprovalNote("");
     setCaptionLanguage("auto");
     setCaptionState("idle");
     setSelectedCaptionId(null);
@@ -1362,6 +1372,7 @@ export default function PhaseOneEditor() {
           selectedClipId: null,
           selectedOverlayId: firstTextOverlay?.id ?? null,
           reviewComments: [],
+          approval: initialApproval,
         });
         setLastSavedAt(savedAt);
         setSaveState("saved");
@@ -3331,12 +3342,33 @@ export default function PhaseOneEditor() {
       selectedClipId,
       selectedOverlayId: selectedId,
       reviewComments,
+      approval,
     };
   }
 
   async function refreshSnapshots() {
     const nextSnapshots = await listPhaseTwoSnapshots();
     setSnapshots(nextSnapshots);
+  }
+
+  function markApproval(status: ApprovalStatus) {
+    const openCommentCount = reviewComments.filter((comment) => !comment.resolved).length;
+    if (status === "approved" && openCommentCount > 0) return;
+
+    setApproval({
+      status,
+      updatedAt: Date.now(),
+      note: approvalNote.trim(),
+    });
+    setApprovalNote("");
+  }
+
+  function invalidateApprovedProject(note: string) {
+    setApproval((current) =>
+      current.status === "approved"
+        ? { status: "changes_requested", updatedAt: Date.now(), note }
+        : current
+    );
   }
 
   function addReviewComment() {
@@ -3357,10 +3389,15 @@ export default function PhaseOneEditor() {
         resolved: false,
       },
     ]);
+    invalidateApprovedProject("A new review comment was opened after approval.");
     setCommentDraft("");
   }
 
   function toggleReviewComment(commentId: string) {
+    const target = reviewComments.find((comment) => comment.id === commentId);
+    if (target?.resolved) {
+      invalidateApprovedProject("A resolved review comment was reopened after approval.");
+    }
     setReviewComments((current) =>
       current.map((comment) =>
         comment.id === commentId
@@ -3420,6 +3457,8 @@ export default function PhaseOneEditor() {
     setSnapEnabled(state.snapEnabled ?? true);
     setReviewComments(state.reviewComments ?? []);
     setCommentDraft("");
+    setApproval(state.approval ?? initialApproval);
+    setApprovalNote("");
 
     const clips = state.timeline.tracks[0]?.clips ?? [];
     const selectedClip =
@@ -3539,6 +3578,7 @@ export default function PhaseOneEditor() {
       selectedClipId: state.selectedClipId,
       selectedOverlayId: state.selectedOverlayId,
       reviewComments: state.reviewComments ?? [],
+      approval: state.approval ?? initialApproval,
     };
   }
 
@@ -3662,6 +3702,7 @@ export default function PhaseOneEditor() {
     languageVariants,
     campaignExperiments,
     reviewComments,
+    approval,
     timelineZoom,
     snapEnabled,
   ]);
@@ -5707,7 +5748,7 @@ export default function PhaseOneEditor() {
               >
                 <span>
                   <strong>{snapshot.projectName}</strong>
-                  <small>{snapshot.reason === "manual" ? "Manual" : "Auto"} · {snapshot.mediaCount} asset{snapshot.mediaCount === 1 ? "" : "s"} · {snapshot.commentCount} comment{snapshot.commentCount === 1 ? "" : "s"}</small>
+                  <small>{snapshot.reason === "manual" ? "Manual" : "Auto"} · {snapshot.mediaCount} asset{snapshot.mediaCount === 1 ? "" : "s"} · {snapshot.commentCount} comment{snapshot.commentCount === 1 ? "" : "s"} · {snapshot.approvalStatus.replaceAll("_", " ")}</small>
                 </span>
                 <time>
                   {new Date(snapshot.savedAt).toLocaleTimeString([], {
@@ -5717,6 +5758,82 @@ export default function PhaseOneEditor() {
                 </time>
               </button>
             ))}
+          </div>
+
+          <h2>Approval</h2>
+          <div className="providerPanel" data-testid="approval-panel">
+            <div className="providerPanelHeader">
+              <strong data-testid="approval-status">
+                {approval.status.replaceAll("_", " ")}
+              </strong>
+              <span>
+                {reviewComments.filter((comment) => !comment.resolved).length} open comment
+                {reviewComments.filter((comment) => !comment.resolved).length === 1 ? "" : "s"}
+              </span>
+            </div>
+            {approval.updatedAt && (
+              <small>
+                Updated {new Date(approval.updatedAt).toLocaleTimeString([], {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}
+              </small>
+            )}
+            {approval.note && (
+              <p className="hint" data-testid="approval-current-note">{approval.note}</p>
+            )}
+            <label>
+              Approval note
+              <textarea
+                aria-label="Approval note"
+                rows={2}
+                placeholder="Optional review or approval note…"
+                value={approvalNote}
+                onChange={(event) => setApprovalNote(event.target.value)}
+              />
+            </label>
+            <div className="assetActions">
+              <button
+                type="button"
+                aria-label="Send for review"
+                disabled={approval.status === "in_review"}
+                onClick={() => markApproval("in_review")}
+              >
+                Send for review
+              </button>
+              <button
+                type="button"
+                aria-label="Request changes"
+                disabled={approval.status === "changes_requested"}
+                onClick={() => markApproval("changes_requested")}
+              >
+                Request changes
+              </button>
+              <button
+                type="button"
+                aria-label="Approve project"
+                disabled={
+                  approval.status === "approved" ||
+                  reviewComments.some((comment) => !comment.resolved)
+                }
+                onClick={() => markApproval("approved")}
+              >
+                Approve
+              </button>
+              <button
+                type="button"
+                aria-label="Return approval to draft"
+                disabled={approval.status === "draft"}
+                onClick={() => markApproval("draft")}
+              >
+                Draft
+              </button>
+            </div>
+            {reviewComments.some((comment) => !comment.resolved) && (
+              <small data-testid="approval-blocker">
+                Resolve all open review comments before approval.
+              </small>
+            )}
           </div>
 
           <h2>Review comments</h2>
