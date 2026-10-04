@@ -1,5 +1,22 @@
 export type RatioKey = "9:16" | "1:1" | "4:5" | "16:9";
 
+export type OverlayEasing = "linear" | "ease-in" | "ease-out" | "ease-in-out";
+
+export type OverlayKeyframeValue = {
+  x: number;
+  y: number;
+  opacity: number;
+  scale: number;
+  rotation: number;
+};
+
+export type OverlayKeyframe = {
+  id: string;
+  time: number;
+  easing: OverlayEasing;
+  value: OverlayKeyframeValue;
+};
+
 export type TextOverlay = {
   id: string;
   kind: "text";
@@ -11,6 +28,9 @@ export type TextOverlay = {
   fontFamily?: string;
   color: string;
   opacity: number;
+  scale?: number;
+  rotation?: number;
+  keyframes?: OverlayKeyframe[];
   align: "left" | "center" | "right";
   direction: "ltr" | "rtl";
   startTime?: number;
@@ -25,6 +45,9 @@ export type ImageOverlay = {
   y: number;
   width: number;
   opacity: number;
+  scale?: number;
+  rotation?: number;
+  keyframes?: OverlayKeyframe[];
   startTime?: number;
   endTime?: number | null;
 };

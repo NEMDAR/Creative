@@ -3,7 +3,7 @@
 import { ChangeEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { CAPTION_STYLE_PRESETS, captionCueAtTime, cloneCaptionStylePreset, normalizeCaptionStyle, normalizeCaptionTrack, type CaptionCue, type CaptionEmphasis, type CaptionLanguage, type CaptionPosition, type CaptionPresetId, type CaptionStyleConfig, type CaptionTrack } from "../lib/editor/captions";
 import { brandCaptionDefaults, DEFAULT_BRAND_KIT, normalizeBrandKit, type BrandKit } from "../lib/editor/brand-kit";
-import type { CreatorProject, Overlay, RatioKey, TextOverlay } from "../lib/editor/types";
+import type { CreatorProject, Overlay, OverlayEasing, OverlayKeyframe, RatioKey, TextOverlay } from "../lib/editor/types";
 import { listPhaseTwoSnapshots, loadBrandKit, loadPhaseOneDraft, loadPhaseTwoDraft, loadPhaseTwoSnapshot, saveBrandKit, savePhaseTwoDraft, savePhaseTwoSnapshot, type HydratedPhaseTwoState, type PhaseTwoSaveInput, type PhaseTwoSnapshotSummary } from "../lib/editor/storage";
 import { buildSequentialTimeline, createEmptyTimeline, deleteTimelineClip, duplicateTimelineClip, formatTimelineTime, getMaxTransitionDuration, getNextTimelineClip, getTransitionVisualState, isCrossfadeEligible, moveTimelineClip, removeTimelineRange, resolveTimelineTime, setTimelineClipTransition, setTimelinePlayhead, splitTimelineClip, timelineTimeForClip, trimTimelineClip, updateTimelineClipTransform, type ClipFitMode, type TimelineClip, type TimelineState, type TransitionType } from "../lib/editor/timeline";
 import { instantiateMarketingTemplate, MARKETING_TEMPLATES, type MarketingTemplateId } from "../lib/editor/templates";
@@ -16,6 +16,7 @@ import { buildCampaignVariants, type CampaignVariant } from "../lib/marketing/va
 import { buildBoundedExperiments, buildLanguageVariants, type CampaignExperiment, type CampaignLanguageVariant } from "../lib/marketing/experiments";
 import { runBrandGuardian } from "../lib/marketing/guardian";
 import { EMPTY_MARKETING_BRIEF, normalizeMarketingBrief, validateMarketingBrief, type MarketingBrief, type MarketingLanguage, type MarketingPlatform } from "../lib/editor/marketing";
+import { createOverlayKeyframe, deleteOverlayKeyframe, resolveOverlayAnimation, upsertOverlayKeyframe } from "../lib/editor/keyframes";
 import type { ServerRenderManifest } from "../lib/render/server-types";
 
 const RATIOS: Record<RatioKey, { w: number; h: number }> = {
@@ -376,6 +377,7 @@ export default function PhaseOneEditor() {
   const [media, setMedia] = useState<MediaState>(null);
   const [mediaItems, setMediaItems] = useState<MediaItem[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedKeyframeId, setSelectedKeyframeId] = useState<string | null>(null);
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
   const [duration, setDuration] = useState(0);
   const [timeline, setTimeline] = useState(createEmptyTimeline);
@@ -620,6 +622,11 @@ export default function PhaseOneEditor() {
   const selected = useMemo(
     () => project.overlays.find((overlay) => overlay.id === selectedId) ?? null,
     [project.overlays, selectedId]
+  );
+
+  const selectedKeyframe = useMemo(
+    () => selected?.keyframes?.find((keyframe) => keyframe.id === selectedKeyframeId) ?? null,
+    [selected, selectedKeyframeId]
   );
 
   const selectedClip = useMemo(
@@ -2689,6 +2696,58 @@ export default function PhaseOneEditor() {
     }), recordHistory);
   }
 
+  function addSelectedOverlayKeyframe() {
+    if (!selected) return;
+    const keyframe = createOverlayKeyframe(selected, timeline.playhead);
+    replaceProject((current) => ({
+      ...current,
+      overlays: current.overlays.map((overlay) =>
+        overlay.id === selected.id
+          ? upsertOverlayKeyframe(overlay, keyframe)
+          : overlay
+      ),
+    }));
+    setSelectedKeyframeId(keyframe.id);
+  }
+
+  function updateSelectedOverlayKeyframe(
+    patch: Partial<OverlayKeyframe>,
+    valuePatch?: Partial<OverlayKeyframe["value"]>
+  ) {
+    if (!selected || !selectedKeyframe) return;
+    const next: OverlayKeyframe = {
+      ...selectedKeyframe,
+      ...patch,
+      time: Math.max(0, Math.min(timeline.duration, patch.time ?? selectedKeyframe.time)),
+      value: {
+        ...selectedKeyframe.value,
+        ...(valuePatch ?? {}),
+      },
+    };
+    replaceProject((current) => ({
+      ...current,
+      overlays: current.overlays.map((overlay) =>
+        overlay.id === selected.id
+          ? upsertOverlayKeyframe(overlay, next)
+          : overlay
+      ),
+    }));
+  }
+
+  function removeSelectedOverlayKeyframe() {
+    if (!selected || !selectedKeyframe) return;
+    const keyframeId = selectedKeyframe.id;
+    replaceProject((current) => ({
+      ...current,
+      overlays: current.overlays.map((overlay) =>
+        overlay.id === selected.id
+          ? deleteOverlayKeyframe(overlay, keyframeId)
+          : overlay
+      ),
+    }));
+    setSelectedKeyframeId(null);
+  }
+
   function deleteSelected() {
     if (!selectedId) return;
     replaceProject((p) => ({ ...p, overlays: p.overlays.filter((o) => o.id !== selectedId) }));
@@ -2712,9 +2771,15 @@ export default function PhaseOneEditor() {
       ]) ?? []),
       ...project.overlays.flatMap((overlay) => {
         const end = getOverlayEnd(overlay);
-        return Number.isFinite(end)
+        const timing = Number.isFinite(end)
           ? [getOverlayStart(overlay), Math.min(end, timeline.duration)]
           : [getOverlayStart(overlay)];
+        return [
+          ...timing,
+          ...(overlay.keyframes ?? []).map((keyframe) =>
+            Math.max(0, Math.min(timeline.duration, keyframe.time))
+          ),
+        ];
       }),
       ...(audioTrack
         ? [
@@ -3428,16 +3493,18 @@ export default function PhaseOneEditor() {
     }
 
     for (const overlay of project.overlays.filter((item) => isOverlayActive(item, timeline.playhead))) {
+      const animated = resolveOverlayAnimation(overlay, timeline.playhead);
       if (overlay.kind === "text") {
         ctx.save();
-        ctx.globalAlpha = overlay.opacity;
+        ctx.translate((animated.x / 100) * canvas.width, (animated.y / 100) * canvas.height);
+        ctx.rotate((animated.rotation * Math.PI) / 180);
+        ctx.scale(animated.scale, animated.scale);
+        ctx.globalAlpha = animated.opacity;
         ctx.fillStyle = overlay.color;
         ctx.font = `${overlay.fontWeight} ${overlay.fontSize * (canvas.width / 720)}px ${overlay.fontFamily ?? "Arial, sans-serif"}`;
         ctx.textAlign = overlay.align;
         ctx.direction = overlay.direction;
-        const x = (overlay.x / 100) * canvas.width;
-        const y = (overlay.y / 100) * canvas.height;
-        ctx.fillText(overlay.text, x, y);
+        ctx.fillText(overlay.text, 0, 0);
         ctx.restore();
       } else {
         const image = new Image();
@@ -3446,8 +3513,11 @@ export default function PhaseOneEditor() {
         const width = (overlay.width / 100) * canvas.width;
         const height = width * (image.naturalHeight / image.naturalWidth);
         ctx.save();
-        ctx.globalAlpha = overlay.opacity;
-        ctx.drawImage(image, (overlay.x / 100) * canvas.width - width / 2, (overlay.y / 100) * canvas.height - height / 2, width, height);
+        ctx.translate((animated.x / 100) * canvas.width, (animated.y / 100) * canvas.height);
+        ctx.rotate((animated.rotation * Math.PI) / 180);
+        ctx.scale(animated.scale, animated.scale);
+        ctx.globalAlpha = animated.opacity;
+        ctx.drawImage(image, -width / 2, -height / 2, width, height);
         ctx.restore();
       }
     }
@@ -3496,14 +3566,18 @@ export default function PhaseOneEditor() {
     }
 
     for (const overlay of project.overlays.filter((item) => isOverlayActive(item, timelineTime))) {
+      const animated = resolveOverlayAnimation(overlay, timelineTime);
       if (overlay.kind === "text") {
         ctx.save();
-        ctx.globalAlpha = overlay.opacity;
+        ctx.translate((animated.x / 100) * width, (animated.y / 100) * height);
+        ctx.rotate((animated.rotation * Math.PI) / 180);
+        ctx.scale(animated.scale, animated.scale);
+        ctx.globalAlpha = animated.opacity;
         ctx.fillStyle = overlay.color;
         ctx.font = `${overlay.fontWeight} ${overlay.fontSize * (width / 720)}px ${overlay.fontFamily ?? "Arial, sans-serif"}`;
         ctx.textAlign = overlay.align;
         ctx.direction = overlay.direction;
-        ctx.fillText(overlay.text, (overlay.x / 100) * width, (overlay.y / 100) * height);
+        ctx.fillText(overlay.text, 0, 0);
         ctx.restore();
         continue;
       }
@@ -3513,11 +3587,14 @@ export default function PhaseOneEditor() {
       const renderedWidth = (overlay.width / 100) * width;
       const renderedHeight = renderedWidth * (image.naturalHeight / image.naturalWidth);
       ctx.save();
-      ctx.globalAlpha = overlay.opacity;
+      ctx.translate((animated.x / 100) * width, (animated.y / 100) * height);
+      ctx.rotate((animated.rotation * Math.PI) / 180);
+      ctx.scale(animated.scale, animated.scale);
+      ctx.globalAlpha = animated.opacity;
       ctx.drawImage(
         image,
-        (overlay.x / 100) * width - renderedWidth / 2,
-        (overlay.y / 100) * height - renderedHeight / 2,
+        -renderedWidth / 2,
+        -renderedHeight / 2,
         renderedWidth,
         renderedHeight
       );
@@ -4874,37 +4951,52 @@ export default function PhaseOneEditor() {
               )}
               {audioTrack && <audio ref={audioRef} src={audioTrack.url} preload="auto" />}
 
-              {project.overlays.filter((overlay) => isOverlayActive(overlay, timeline.playhead)).map((overlay) => (
-                <div
-                  key={overlay.id}
-                  className={selectedId === overlay.id ? "overlay selected" : "overlay"}
-                  style={{ left: `${overlay.x}%`, top: `${overlay.y}%` }}
-                  onPointerDown={(e) => dragOverlay(e, overlay)}
-                  onClick={() => setSelectedId(overlay.id)}
-                >
-                  {overlay.kind === "text" ? (
-                    <span
+              {project.overlays
+                .filter((overlay) => isOverlayActive(overlay, timeline.playhead))
+                .map((overlay) => {
+                  const animated = resolveOverlayAnimation(overlay, timeline.playhead);
+                  return (
+                    <div
+                      key={overlay.id}
+                      className={selectedId === overlay.id ? "overlay selected" : "overlay"}
+                      data-testid={`overlay-${overlay.id}`}
+                      data-motion-x={animated.x.toFixed(3)}
+                      data-motion-y={animated.y.toFixed(3)}
+                      data-motion-opacity={animated.opacity.toFixed(3)}
+                      data-motion-scale={animated.scale.toFixed(3)}
+                      data-motion-rotation={animated.rotation.toFixed(3)}
                       style={{
-                        fontSize: `${Math.max(12, overlay.fontSize * 0.55)}px`,
-                        fontWeight: overlay.fontWeight,
-                        fontFamily: overlay.fontFamily ?? "Arial, sans-serif",
-                        color: overlay.color,
-                        opacity: overlay.opacity,
-                        textAlign: overlay.align,
-                        direction: overlay.direction,
+                        left: `${animated.x}%`,
+                        top: `${animated.y}%`,
+                        transform: `translate(-50%,-50%) rotate(${animated.rotation}deg) scale(${animated.scale})`,
                       }}
+                      onPointerDown={(e) => dragOverlay(e, overlay)}
+                      onClick={() => setSelectedId(overlay.id)}
                     >
-                      {overlay.text}
-                    </span>
-                  ) : (
-                    <img
-                      src={overlay.src}
-                      alt="Overlay"
-                      style={{ width: `${Math.max(56, overlay.width * 4)}px`, opacity: overlay.opacity }}
-                    />
-                  )}
-                </div>
-              ))}
+                      {overlay.kind === "text" ? (
+                        <span
+                          style={{
+                            fontSize: `${Math.max(12, overlay.fontSize * 0.55)}px`,
+                            fontWeight: overlay.fontWeight,
+                            fontFamily: overlay.fontFamily ?? "Arial, sans-serif",
+                            color: overlay.color,
+                            opacity: animated.opacity,
+                            textAlign: overlay.align,
+                            direction: overlay.direction,
+                          }}
+                        >
+                          {overlay.text}
+                        </span>
+                      ) : (
+                        <img
+                          src={overlay.src}
+                          alt="Overlay"
+                          style={{ width: `${Math.max(56, overlay.width * 4)}px`, opacity: animated.opacity }}
+                        />
+                      )}
+                    </div>
+                  );
+                })}
               {activeCaption && (
                 <div
                   className="captionPreview"
@@ -5176,6 +5268,163 @@ export default function PhaseOneEditor() {
               </button>
             ))}
           </div>
+          <h2>Motion</h2>
+          {!selected && <p className="hint">Select a text or logo overlay to animate it.</p>}
+          {selected && (
+            <div className="motionInspector" data-testid="motion-inspector">
+              <div className="clipMeta">
+                <strong>{selected.kind === "text" ? selected.text : "Image overlay"}</strong>
+                <span>{selected.keyframes?.length ?? 0} keyframes</span>
+              </div>
+              <button
+                type="button"
+                className="toolButton"
+                disabled={timeline.duration <= 0}
+                onClick={addSelectedOverlayKeyframe}
+              >
+                Add keyframe at {formatTimelineTime(timeline.playhead)}
+              </button>
+              {(selected.keyframes?.length ?? 0) > 0 && (
+                <div className="keyframeList" data-testid="keyframe-list">
+                  {[...(selected.keyframes ?? [])]
+                    .sort((a, b) => a.time - b.time)
+                    .map((keyframe, index) => (
+                      <button
+                        type="button"
+                        key={keyframe.id}
+                        data-testid="overlay-keyframe"
+                        className={selectedKeyframeId === keyframe.id ? "keyframeItem active" : "keyframeItem"}
+                        onClick={() => {
+                          setSelectedKeyframeId(keyframe.id);
+                          seekTimelineTo(keyframe.time, false);
+                        }}
+                      >
+                        <span>KF {index + 1}</span>
+                        <strong>{formatTimelineTime(keyframe.time)}</strong>
+                        <small>{keyframe.easing}</small>
+                      </button>
+                    ))}
+                </div>
+              )}
+              {selectedKeyframe && (
+                <div className="keyframeEditor" data-testid="keyframe-editor">
+                  <label>
+                    Time
+                    <input
+                      aria-label="Keyframe time"
+                      type="number"
+                      min={0}
+                      max={timeline.duration}
+                      step={0.1}
+                      value={selectedKeyframe.time}
+                      onChange={(e) => {
+                        const time = Number(e.target.value);
+                        updateSelectedOverlayKeyframe({ time });
+                        seekTimelineTo(time, false);
+                      }}
+                    />
+                  </label>
+                  <label>
+                    Easing
+                    <select
+                      aria-label="Keyframe easing"
+                      value={selectedKeyframe.easing}
+                      onChange={(e) =>
+                        updateSelectedOverlayKeyframe({
+                          easing: e.target.value as OverlayEasing,
+                        })
+                      }
+                    >
+                      <option value="linear">Linear</option>
+                      <option value="ease-in">Ease in</option>
+                      <option value="ease-out">Ease out</option>
+                      <option value="ease-in-out">Ease in/out</option>
+                    </select>
+                  </label>
+                  <div className="keyframeValueGrid">
+                    <label>
+                      X %
+                      <input
+                        aria-label="Keyframe X"
+                        type="number"
+                        min={0}
+                        max={100}
+                        step={1}
+                        value={selectedKeyframe.value.x}
+                        onChange={(e) =>
+                          updateSelectedOverlayKeyframe({}, { x: Number(e.target.value) })
+                        }
+                      />
+                    </label>
+                    <label>
+                      Y %
+                      <input
+                        aria-label="Keyframe Y"
+                        type="number"
+                        min={0}
+                        max={100}
+                        step={1}
+                        value={selectedKeyframe.value.y}
+                        onChange={(e) =>
+                          updateSelectedOverlayKeyframe({}, { y: Number(e.target.value) })
+                        }
+                      />
+                    </label>
+                    <label>
+                      Opacity
+                      <input
+                        aria-label="Keyframe opacity"
+                        type="number"
+                        min={0}
+                        max={1}
+                        step={0.05}
+                        value={selectedKeyframe.value.opacity}
+                        onChange={(e) =>
+                          updateSelectedOverlayKeyframe({}, { opacity: Number(e.target.value) })
+                        }
+                      />
+                    </label>
+                    <label>
+                      Scale
+                      <input
+                        aria-label="Keyframe scale"
+                        type="number"
+                        min={0.05}
+                        max={8}
+                        step={0.05}
+                        value={selectedKeyframe.value.scale}
+                        onChange={(e) =>
+                          updateSelectedOverlayKeyframe({}, { scale: Number(e.target.value) })
+                        }
+                      />
+                    </label>
+                    <label>
+                      Rotation
+                      <input
+                        aria-label="Keyframe rotation"
+                        type="number"
+                        min={-720}
+                        max={720}
+                        step={1}
+                        value={selectedKeyframe.value.rotation}
+                        onChange={(e) =>
+                          updateSelectedOverlayKeyframe({}, { rotation: Number(e.target.value) })
+                        }
+                      />
+                    </label>
+                  </div>
+                  <button
+                    type="button"
+                    className="danger"
+                    onClick={removeSelectedOverlayKeyframe}
+                  >
+                    Delete keyframe
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
           {mediaItems.length <= 1 && media?.kind === "video" && (
             <>
               <h2>Video</h2>

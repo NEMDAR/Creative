@@ -336,3 +336,11 @@ h2 { font-size:12px; text-transform:uppercase; letter-spacing:.1em; color:var(--
 .guardianIssue b { text-transform:uppercase; }
 .guardianIssue.error { border-color:rgba(255,105,120,.32); }
 .guardianIssue.warning { border-color:rgba(245,208,111,.28); }
+
+.motionInspector { display:flex; flex-direction:column; gap:8px; margin-bottom:14px; padding:10px; border:1px solid rgba(22,139,241,.2); border-radius:11px; background:rgba(22,139,241,.035); }
+.keyframeList { display:flex; flex-wrap:wrap; gap:5px; }
+.keyframeItem { display:flex; flex-direction:column; gap:1px; min-width:68px; border:1px solid var(--line); border-radius:8px; padding:6px; background:var(--surface-2); color:var(--text); font-size:9px; text-align:left; }
+.keyframeItem.active { border-color:rgba(22,139,241,.7); background:rgba(22,139,241,.12); }
+.keyframeItem span,.keyframeItem small { color:var(--muted); font-size:8px; }
+.keyframeEditor { display:flex; flex-direction:column; gap:7px; padding-top:4px; }
+.keyframeValueGrid { display:grid; grid-template-columns:1fr 1fr; gap:7px; }
