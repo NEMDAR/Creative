@@ -2181,3 +2181,50 @@ test("P7 batch generation validates CSV rows bounds API output and loads branded
   expect(payload.truncatedRows).toBe(2);
   expect(payload.variants).toHaveLength(25);
 });
+
+test("P7 approved publishing handoff scopes connector and persists calendar schedule", async ({ page }) => {
+  await page.goto("/");
+
+  await expect(page.getByTestId("publishing-panel")).toBeVisible();
+  await expect(page.getByTestId("publishing-approval-blocker")).toBeVisible();
+
+  const blockedResponse = await page.request.post("/api/publishing/handoff", {
+    data: {
+      connectorId: "nemdar-sandbox-instagram",
+      workspaceId: "workspace-a",
+      accountId: "account-a",
+      projectName: "Blocked Project",
+      approved: false,
+    },
+  });
+  expect(blockedResponse.status()).toBe(400);
+  await expect.poll(async () => (await blockedResponse.json()).error).toContain(
+    "approval"
+  );
+
+  await page.getByLabel("Approve project").click();
+  await expect(page.getByTestId("publishing-approval-blocker")).toHaveCount(0);
+
+  await page.getByLabel("Publishing connector").selectOption("nemdar-sandbox-instagram");
+  await page.getByLabel("Publishing workspace").fill("uae-marketing");
+  await page.getByLabel("Publishing account").fill("ig-main");
+  await page.getByLabel("Publishing caption").fill("Approved campaign handoff");
+  await page.getByLabel("Publishing schedule").fill("2030-01-02T10:30");
+
+  await page.getByRole("button", { name: "Schedule handoff" }).click();
+
+  const handoff = page.getByTestId("publishing-handoff");
+  await expect(handoff).toHaveCount(1);
+  await expect(handoff).toContainText("instagram");
+  await expect(handoff).toContainText("scheduled");
+  await expect(handoff).toContainText("uae-marketing");
+  await expect(handoff).toContainText("ig-main");
+
+  await expect(page.getByTestId("save-state")).toHaveText("Saved", { timeout: 5_000 });
+  await page.reload();
+  await page.getByRole("button", { name: "Load draft" }).click();
+
+  await expect(page.getByTestId("publishing-handoff")).toHaveCount(1);
+  await expect(page.getByTestId("publishing-handoff")).toContainText("instagram");
+  await expect(page.getByTestId("publishing-handoff")).toContainText("scheduled");
+});

@@ -384,3 +384,14 @@ h2 { font-size:12px; text-transform:uppercase; letter-spacing:.1em; color:var(--
 .batchVariant span,.batchVariant small { font-size:9px; color:var(--muted); }
 .batchVariant.ready { border-color:rgba(104,211,145,.26); }
 .batchVariant.invalid { border-color:rgba(255,105,120,.3); }
+
+.publishingPanel { display:flex; flex-direction:column; gap:8px; padding:10px; border:1px solid rgba(22,139,241,.2); border-radius:11px; background:rgba(255,255,255,.02); }
+.publishingHeader { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.publishingHeader strong { font-size:11px; }
+.publishingHeader span,.publishingPanel small,.publishingHandoff time { color:var(--muted); font-size:9px; }
+.publishingPanel textarea { min-height:64px; resize:vertical; }
+.publishingCalendar { display:flex; flex-direction:column; gap:6px; max-height:240px; overflow:auto; }
+.publishingHandoff { display:flex; flex-direction:column; gap:4px; padding:8px; border:1px solid rgba(104,211,145,.25); border-radius:8px; background:var(--surface-2); }
+.publishingHandoff > div { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.publishingHandoff strong { font-size:10px; text-transform:capitalize; }
+.publishingHandoff span { font-size:9px; color:#8ad9aa; }

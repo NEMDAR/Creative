@@ -16,6 +16,7 @@ import { buildCampaignVariants, type CampaignVariant } from "../lib/marketing/va
 import { buildBoundedExperiments, buildLanguageVariants, type CampaignExperiment, type CampaignLanguageVariant } from "../lib/marketing/experiments";
 import { runBrandGuardian } from "../lib/marketing/guardian";
 import { MAX_BATCH_ROWS, parseBatchCsv, type BatchGenerationResult } from "../lib/scale/batch";
+import type { PublishingConnector, PublishingHandoff } from "../lib/scale/publishing";
 import { EMPTY_MARKETING_BRIEF, normalizeMarketingBrief, validateMarketingBrief, type MarketingBrief, type MarketingLanguage, type MarketingPlatform } from "../lib/editor/marketing";
 import { createOverlayKeyframe, deleteOverlayKeyframe, resolveOverlayAnimation, upsertOverlayKeyframe } from "../lib/editor/keyframes";
 import { applyMotionPreset, MOTION_PRESETS, type MotionPresetId } from "../lib/editor/motion-presets";
@@ -585,6 +586,15 @@ export default function PhaseOneEditor() {
   const [batchState, setBatchState] = useState<"idle" | "generating" | "ready" | "error">("idle");
   const [batchError, setBatchError] = useState<string | null>(null);
   const [batchResult, setBatchResult] = useState<BatchGenerationResult | null>(null);
+  const [publishingConnectors, setPublishingConnectors] = useState<PublishingConnector[]>([]);
+  const [publishingConnectorId, setPublishingConnectorId] = useState("");
+  const [publishingWorkspaceId, setPublishingWorkspaceId] = useState("nemdar-local");
+  const [publishingAccountId, setPublishingAccountId] = useState("sandbox-account");
+  const [publishingCaption, setPublishingCaption] = useState("");
+  const [publishingSchedule, setPublishingSchedule] = useState("");
+  const [publishingHandoffs, setPublishingHandoffs] = useState<PublishingHandoff[]>([]);
+  const [publishingState, setPublishingState] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [publishingError, setPublishingError] = useState<string | null>(null);
   const [captionLanguage, setCaptionLanguage] = useState<CaptionLanguage>("auto");
   const [captionState, setCaptionState] = useState<"idle" | "generating" | "ready" | "error">("idle");
   const [captionError, setCaptionError] = useState<string | null>(null);
@@ -660,6 +670,45 @@ export default function PhaseOneEditor() {
           setProviderState("error");
           setProviderError(
             error instanceof Error ? error.message : "Unable to load AI providers."
+          );
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        setPublishingState("loading");
+        const response = await fetch("/api/publishing/connectors");
+        const payload = (await response.json()) as {
+          connectors?: PublishingConnector[];
+          error?: string;
+        };
+        if (!response.ok || !Array.isArray(payload.connectors)) {
+          throw new Error(payload.error || "Unable to load publishing connectors.");
+        }
+        if (!cancelled) {
+          setPublishingConnectors(payload.connectors);
+          setPublishingConnectorId(
+            (current) => current || payload.connectors?.[0]?.id || ""
+          );
+          setPublishingState("ready");
+          setPublishingError(null);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setPublishingState("error");
+          setPublishingError(
+            error instanceof Error
+              ? error.message
+              : "Unable to load publishing connectors."
           );
         }
       }
@@ -1345,6 +1394,7 @@ export default function PhaseOneEditor() {
     setApprovalNote("");
     setMotionComponents([]);
     setMotionComponentName("");
+    setPublishingHandoffs([]);
     setCaptionLanguage("auto");
     setCaptionState("idle");
     setSelectedCaptionId(null);
@@ -1385,6 +1435,7 @@ export default function PhaseOneEditor() {
           reviewComments: [],
           approval: initialApproval,
           motionComponents: [],
+          publishingHandoffs: [],
         });
         setLastSavedAt(savedAt);
         setSaveState("saved");
@@ -2062,6 +2113,64 @@ export default function PhaseOneEditor() {
       setBatchState("error");
       setBatchError(
         error instanceof Error ? error.message : "Unable to generate batch."
+      );
+    }
+  }
+
+  async function createPublishingHandoffFromProject() {
+    if (approval.status !== "approved") {
+      setPublishingState("error");
+      setPublishingError("Approve the project before publishing handoff.");
+      return;
+    }
+    if (!publishingConnectorId) {
+      setPublishingState("error");
+      setPublishingError("Select a publishing connector.");
+      return;
+    }
+
+    try {
+      setPublishingState("loading");
+      setPublishingError(null);
+      const response = await fetch("/api/publishing/handoff", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          connectorId: publishingConnectorId,
+          workspaceId: publishingWorkspaceId,
+          accountId: publishingAccountId,
+          projectName: project.name,
+          caption: publishingCaption,
+          assetName: media?.name ?? null,
+          scheduledAt: publishingSchedule || null,
+          approved: true,
+        }),
+      });
+      const payload = (await response.json()) as PublishingHandoff & {
+        error?: string;
+      };
+      if (!response.ok || !payload.id) {
+        throw new Error(payload.error || "Publishing handoff failed.");
+      }
+
+      setPublishingHandoffs((current) =>
+        [payload, ...current].sort((a, b) => {
+          const aTime = a.scheduledAt
+            ? new Date(a.scheduledAt).getTime()
+            : a.createdAt;
+          const bTime = b.scheduledAt
+            ? new Date(b.scheduledAt).getTime()
+            : b.createdAt;
+          return aTime - bTime;
+        })
+      );
+      setPublishingState("ready");
+    } catch (error) {
+      setPublishingState("error");
+      setPublishingError(
+        error instanceof Error
+          ? error.message
+          : "Unable to create publishing handoff."
       );
     }
   }
@@ -3462,6 +3571,7 @@ export default function PhaseOneEditor() {
       reviewComments,
       approval,
       motionComponents,
+      publishingHandoffs,
     };
   }
 
@@ -3580,6 +3690,7 @@ export default function PhaseOneEditor() {
     setApprovalNote("");
     setMotionComponents(state.motionComponents ?? []);
     setMotionComponentName("");
+    setPublishingHandoffs(state.publishingHandoffs ?? []);
 
     const clips = state.timeline.tracks[0]?.clips ?? [];
     const selectedClip =
@@ -3701,6 +3812,7 @@ export default function PhaseOneEditor() {
       reviewComments: state.reviewComments ?? [],
       approval: state.approval ?? initialApproval,
       motionComponents: state.motionComponents ?? [],
+      publishingHandoffs: state.publishingHandoffs ?? [],
     };
   }
 
@@ -3774,6 +3886,7 @@ export default function PhaseOneEditor() {
       campaignExperiments.length > 0 ||
       reviewComments.length > 0 ||
       motionComponents.length > 0 ||
+      publishingHandoffs.length > 0 ||
       Boolean(marketingBrief.product || marketingBrief.audience || marketingBrief.objective || marketingBrief.cta);
     if (!hasMeaningfulState) return;
 
@@ -3828,6 +3941,7 @@ export default function PhaseOneEditor() {
     reviewComments,
     approval,
     motionComponents,
+    publishingHandoffs,
     timelineZoom,
     snapEnabled,
   ]);
@@ -4819,6 +4933,103 @@ export default function PhaseOneEditor() {
                   ))}
                 </div>
               </>
+            )}
+          </div>
+
+          <h2>Publishing & Calendar</h2>
+          <div className="publishingPanel" data-testid="publishing-panel">
+            <div className="publishingHeader">
+              <strong>Approved handoff</strong>
+              <span>{approval.status}</span>
+            </div>
+            <label>
+              Connector
+              <select
+                aria-label="Publishing connector"
+                value={publishingConnectorId}
+                onChange={(e) => setPublishingConnectorId(e.target.value)}
+                disabled={publishingState === "loading"}
+              >
+                {publishingConnectors.map((connector) => (
+                  <option key={connector.id} value={connector.id}>
+                    {connector.label} · {connector.status}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Workspace
+              <input
+                aria-label="Publishing workspace"
+                value={publishingWorkspaceId}
+                onChange={(e) => setPublishingWorkspaceId(e.target.value)}
+              />
+            </label>
+            <label>
+              Account
+              <input
+                aria-label="Publishing account"
+                value={publishingAccountId}
+                onChange={(e) => setPublishingAccountId(e.target.value)}
+              />
+            </label>
+            <label>
+              Caption / post copy
+              <textarea
+                aria-label="Publishing caption"
+                value={publishingCaption}
+                onChange={(e) => setPublishingCaption(e.target.value)}
+              />
+            </label>
+            <label>
+              Schedule
+              <input
+                aria-label="Publishing schedule"
+                type="datetime-local"
+                value={publishingSchedule}
+                onChange={(e) => setPublishingSchedule(e.target.value)}
+              />
+            </label>
+            {approval.status !== "approved" && (
+              <small data-testid="publishing-approval-blocker">
+                Project must be Approved before publishing or scheduling.
+              </small>
+            )}
+            <button
+              type="button"
+              className="primary"
+              disabled={
+                approval.status !== "approved" ||
+                !publishingConnectorId ||
+                publishingState === "loading"
+              }
+              onClick={() => void createPublishingHandoffFromProject()}
+            >
+              {publishingSchedule ? "Schedule handoff" : "Create publishing handoff"}
+            </button>
+            {publishingError && <p className="providerError">{publishingError}</p>}
+            {publishingHandoffs.length > 0 && (
+              <div className="publishingCalendar" data-testid="publishing-calendar">
+                {publishingHandoffs.map((handoff) => (
+                  <article
+                    key={handoff.id}
+                    className="publishingHandoff"
+                    data-testid="publishing-handoff"
+                  >
+                    <div>
+                      <strong>{handoff.channel}</strong>
+                      <span>{handoff.status}</span>
+                    </div>
+                    <small>{handoff.workspaceId} · {handoff.accountId}</small>
+                    <small>{handoff.projectName}</small>
+                    <time>
+                      {handoff.scheduledAt
+                        ? new Date(handoff.scheduledAt).toLocaleString()
+                        : "Ready for immediate handoff"}
+                    </time>
+                  </article>
+                ))}
+              </div>
             )}
           </div>
 

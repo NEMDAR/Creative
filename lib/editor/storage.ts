@@ -8,6 +8,7 @@ import type { CampaignVariant } from "../marketing/variants";
 import type { CampaignExperiment, CampaignLanguageVariant } from "../marketing/experiments";
 import type { CreatorProject } from "./types";
 import type { MotionComponent } from "./motion-components";
+import type { PublishingHandoff } from "../scale/publishing";
 
 export type PersistedSourceMedia = {
   kind: "video" | "image";
@@ -95,6 +96,7 @@ export type PhaseTwoSaveInput = {
   reviewComments: ReviewComment[];
   approval: ProjectApproval;
   motionComponents: MotionComponent[];
+  publishingHandoffs: PublishingHandoff[];
 };
 
 type PersistedMediaItem = Omit<PersistableMediaItem, "blob" | "proxyBlob">;
@@ -121,6 +123,7 @@ type PersistedPhaseTwoState = {
   reviewComments: ReviewComment[];
   approval: ProjectApproval;
   motionComponents: MotionComponent[];
+  publishingHandoffs: PublishingHandoff[];
 };
 
 export type PhaseTwoDraft = PersistedPhaseTwoState & {
@@ -237,6 +240,7 @@ function toPersistedPhaseTwoState(input: PhaseTwoSaveInput): PersistedPhaseTwoSt
     reviewComments: input.reviewComments ?? [],
     approval: input.approval ?? { status: "draft", updatedAt: null, note: "" },
     motionComponents: input.motionComponents ?? [],
+    publishingHandoffs: input.publishingHandoffs ?? [],
   };
 }
 
@@ -338,6 +342,7 @@ async function hydratePhaseTwoState(
     reviewComments: state.reviewComments ?? [],
     approval: state.approval ?? { status: "draft", updatedAt: null, note: "" },
     motionComponents: state.motionComponents ?? [],
+    publishingHandoffs: state.publishingHandoffs ?? [],
     savedAt,
     snapshotId,
     snapshotReason,
