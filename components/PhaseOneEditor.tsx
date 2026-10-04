@@ -84,7 +84,7 @@ function loadImageElement(src: string) {
   });
 }
 
-function fileToDataUrl(file: File): Promise<string> {
+function fileToDataUrl(file: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result));
@@ -372,6 +372,9 @@ export default function PhaseOneEditor() {
   const [imagePrompt, setImagePrompt] = useState("");
   const [imageGenerationState, setImageGenerationState] = useState<"idle" | "generating" | "error">("idle");
   const [imageGenerationError, setImageGenerationError] = useState<string | null>(null);
+  const [imageEditPrompt, setImageEditPrompt] = useState("");
+  const [imageToolState, setImageToolState] = useState<"idle" | "working" | "error">("idle");
+  const [imageToolError, setImageToolError] = useState<string | null>(null);
   const [captionLanguage, setCaptionLanguage] = useState<CaptionLanguage>("auto");
   const [captionState, setCaptionState] = useState<"idle" | "generating" | "ready" | "error">("idle");
   const [captionError, setCaptionError] = useState<string | null>(null);
@@ -1075,6 +1078,100 @@ export default function PhaseOneEditor() {
       setImageGenerationState("error");
       setImageGenerationError(
         error instanceof Error ? error.message : "Unable to generate image."
+      );
+    }
+  }
+
+  async function createImageVariant(
+    operation: "edit" | "background" | "outpaint",
+    prompt: string,
+    aspectRatio?: RatioKey
+  ) {
+    const source = media?.kind === "image" ? media : null;
+    if (!source) {
+      setImageToolState("error");
+      setImageToolError("Select an image asset first.");
+      return;
+    }
+
+    const normalizedPrompt = prompt.trim();
+    if (!normalizedPrompt) {
+      setImageToolState("error");
+      setImageToolError("Write an edit instruction first.");
+      return;
+    }
+
+    try {
+      setImageToolState("working");
+      setImageToolError(null);
+      const imageUrl = await fileToDataUrl(source.blob);
+      const response = await fetch("/api/generate/image/edit", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          prompt: normalizedPrompt,
+          imageUrl,
+          aspectRatio,
+          operation,
+        }),
+      });
+      const payload = (await response.json()) as {
+        artifact?: ProviderArtifact;
+        prompt?: string;
+        operation?: "edit" | "background" | "outpaint";
+        requestedAspectRatio?: string | null;
+        estimatedCost?: number | null;
+        createdAt?: number;
+        error?: string;
+      };
+      if (!response.ok || !payload.artifact) {
+        throw new Error(payload.error || "Image edit failed.");
+      }
+
+      const artifact = payload.artifact;
+      const assetResponse = await fetch(artifact.url);
+      const blob = await assetResponse.blob();
+      const normalizedBlob =
+        blob.type === artifact.mimeType
+          ? blob
+          : blob.slice(0, blob.size, artifact.mimeType);
+      const url = createObjectUrl(normalizedBlob);
+      const extension =
+        artifact.mimeType.includes("png")
+          ? "png"
+          : artifact.mimeType.includes("jpeg")
+            ? "jpg"
+            : artifact.mimeType.includes("webp")
+              ? "webp"
+              : "svg";
+      const item: MediaItem = {
+        id: crypto.randomUUID(),
+        kind: "image",
+        url,
+        name: `ai-${operation}-${Date.now()}.${extension}`,
+        type: artifact.mimeType,
+        blob: normalizedBlob,
+        duration: 5,
+        generation: {
+          provider: artifact.provider,
+          model: artifact.model,
+          prompt: payload.prompt ?? normalizedPrompt,
+          createdAt: payload.createdAt ?? Date.now(),
+          estimatedCost: payload.estimatedCost ?? null,
+          operation: payload.operation ?? operation,
+          sourceAssetId: source.id,
+          requestedAspectRatio: payload.requestedAspectRatio ?? aspectRatio,
+        },
+      };
+
+      setMediaItems((current) => [...current, item]);
+      setMedia(item);
+      setDuration(0);
+      setImageToolState("idle");
+    } catch (error) {
+      setImageToolState("error");
+      setImageToolError(
+        error instanceof Error ? error.message : "Unable to edit image."
       );
     }
   }
@@ -3033,7 +3130,7 @@ export default function PhaseOneEditor() {
                 <strong title={item.name}>{item.name}</strong>
                 {item.generation && (
                   <small className="assetGeneration" data-testid="asset-generation-meta">
-                    AI · {item.generation.provider} · {item.generation.model}
+                    AI · {item.generation.provider} · {item.generation.model} · {item.generation.operation}
                   </small>
                 )}
                 <div className="assetActions">
@@ -3133,6 +3230,84 @@ export default function PhaseOneEditor() {
               {imageGenerationState === "generating" ? "Generating…" : "Generate image"}
             </button>
             {imageGenerationError && <p className="providerError">{imageGenerationError}</p>}
+          </div>
+
+          <h2>AI Image Tools</h2>
+          <div className="imageToolPanel" data-testid="image-tool-panel">
+            <p className="hint">
+              {media?.kind === "image"
+                ? `Selected: ${media.name}`
+                : "Select an image from Assets first."}
+            </p>
+            <label>
+              Edit instruction
+              <textarea
+                aria-label="Image edit prompt"
+                value={imageEditPrompt}
+                placeholder="Change lighting, product styling, background…"
+                onChange={(e) => setImageEditPrompt(e.target.value)}
+              />
+            </label>
+            <button
+              type="button"
+              className="toolButton"
+              disabled={media?.kind !== "image" || imageToolState === "working"}
+              onClick={() => void createImageVariant("edit", imageEditPrompt)}
+            >
+              AI edit selected
+            </button>
+            <div className="imageToolGrid">
+              <button
+                type="button"
+                className="toolButton"
+                disabled={media?.kind !== "image" || imageToolState === "working"}
+                onClick={() =>
+                  void createImageVariant(
+                    "background",
+                    "Remove the background cleanly and preserve the main subject."
+                  )
+                }
+              >
+                Remove background
+              </button>
+              <button
+                type="button"
+                className="toolButton"
+                disabled={
+                  media?.kind !== "image" ||
+                  !imageEditPrompt.trim() ||
+                  imageToolState === "working"
+                }
+                onClick={() =>
+                  void createImageVariant(
+                    "background",
+                    `Replace the background as follows: ${imageEditPrompt.trim()}`
+                  )
+                }
+              >
+                Replace background
+              </button>
+            </div>
+            <div className="outpaintGrid">
+              {(Object.keys(RATIOS) as RatioKey[]).map((ratioKey) => (
+                <button
+                  type="button"
+                  key={ratioKey}
+                  disabled={media?.kind !== "image" || imageToolState === "working"}
+                  onClick={() =>
+                    void createImageVariant(
+                      "outpaint",
+                      `Expand this image naturally to ${ratioKey} for marketing while preserving the original subject and composition.`,
+                      ratioKey
+                    )
+                  }
+                >
+                  Outpaint {ratioKey}
+                </button>
+              ))}
+            </div>
+            {imageToolState === "working" && <small>Creating editable variant…</small>}
+            {imageToolError && <p className="providerError">{imageToolError}</p>}
           </div>
 
           <h2>Brand Kit</h2>

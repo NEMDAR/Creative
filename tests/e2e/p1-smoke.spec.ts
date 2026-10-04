@@ -1194,3 +1194,32 @@ test("P4 image generation inserts provider-tagged asset into library and persist
   await expect(page.getByTestId("asset-generation-meta")).toContainText("mock-quality");
   await expect(page.locator("#creative-image")).toBeVisible();
 });
+
+test("P4 image tools create non-destructive edit background and outpaint variants", async ({ page }) => {
+  await page.goto("/");
+
+  await page.getByLabel("Image prompt").fill("Luxury product hero shot");
+  await page.getByRole("button", { name: "Generate image" }).click();
+  await expect(page.locator(".assetCard")).toHaveCount(1);
+
+  await page.getByLabel("Image edit prompt").fill("Make the lighting warmer and more cinematic");
+  await page.getByRole("button", { name: "AI edit selected" }).click();
+  await expect(page.locator(".assetCard")).toHaveCount(2);
+  await expect(page.getByTestId("asset-generation-meta").nth(1)).toContainText("edit");
+
+  await page.getByRole("button", { name: "Remove background" }).click();
+  await expect(page.locator(".assetCard")).toHaveCount(3);
+  await expect(page.getByTestId("asset-generation-meta").nth(2)).toContainText("background");
+
+  await page.getByRole("button", { name: "Outpaint 4:5" }).click();
+  await expect(page.locator(".assetCard")).toHaveCount(4);
+  await expect(page.getByTestId("asset-generation-meta").nth(3)).toContainText("outpaint");
+
+  await expect(page.getByTestId("save-state")).toHaveText("Saved", { timeout: 5_000 });
+  await page.reload();
+
+  await expect(page.locator(".assetCard")).toHaveCount(4);
+  await expect(page.getByTestId("asset-generation-meta").nth(1)).toContainText("edit");
+  await expect(page.getByTestId("asset-generation-meta").nth(2)).toContainText("background");
+  await expect(page.getByTestId("asset-generation-meta").nth(3)).toContainText("outpaint");
+});
