@@ -32,7 +32,7 @@ const initialProject: CreatorProject = {
 
 type MediaItem = { id: string; kind: "video" | "image"; url: string; name: string; type: string; blob: Blob; duration: number; generation?: AssetGenerationMetadata };
 type MediaState = MediaItem | null;
-type AudioTrackItem = { id: string; url: string; name: string; type: string; blob: Blob; duration: number; startTime: number; gain: number; fadeIn: number; fadeOut: number; duckingEnabled: boolean; duckingGain: number };
+type AudioTrackItem = { id: string; url: string; name: string; type: string; blob: Blob; duration: number; startTime: number; gain: number; fadeIn: number; fadeOut: number; duckingEnabled: boolean; duckingGain: number; generation?: AssetGenerationMetadata };
 type SilenceReviewRange = { id: string; startTime: number; endTime: number; duration: number; selected: boolean };
 type SilenceSourceKind = "video" | "audio";
 type SceneSuggestion = { id: string; time: number; selected: boolean };
@@ -375,6 +375,14 @@ export default function PhaseOneEditor() {
   const [imageEditPrompt, setImageEditPrompt] = useState("");
   const [imageToolState, setImageToolState] = useState<"idle" | "working" | "error">("idle");
   const [imageToolError, setImageToolError] = useState<string | null>(null);
+  const [videoPrompt, setVideoPrompt] = useState("");
+  const [videoDurationSeconds, setVideoDurationSeconds] = useState(5);
+  const [videoGenerationState, setVideoGenerationState] = useState<"idle" | "generating" | "error">("idle");
+  const [videoGenerationError, setVideoGenerationError] = useState<string | null>(null);
+  const [voiceText, setVoiceText] = useState("");
+  const [voiceLanguage, setVoiceLanguage] = useState<"auto" | "ar" | "en">("auto");
+  const [voiceGenerationState, setVoiceGenerationState] = useState<"idle" | "generating" | "error">("idle");
+  const [voiceGenerationError, setVoiceGenerationError] = useState<string | null>(null);
   const [captionLanguage, setCaptionLanguage] = useState<CaptionLanguage>("auto");
   const [captionState, setCaptionState] = useState<"idle" | "generating" | "ready" | "error">("idle");
   const [captionError, setCaptionError] = useState<string | null>(null);
@@ -1172,6 +1180,173 @@ export default function PhaseOneEditor() {
       setImageToolState("error");
       setImageToolError(
         error instanceof Error ? error.message : "Unable to edit image."
+      );
+    }
+  }
+
+  async function generateVideoAsset(useSelectedImage: boolean) {
+    const prompt = videoPrompt.trim();
+    if (!prompt) {
+      setVideoGenerationState("error");
+      setVideoGenerationError("Write a video prompt first.");
+      return;
+    }
+
+    if (useSelectedImage && media?.kind !== "image") {
+      setVideoGenerationState("error");
+      setVideoGenerationError("Select an image before image-to-video generation.");
+      return;
+    }
+
+    try {
+      setVideoGenerationState("generating");
+      setVideoGenerationError(null);
+      const sourceImage = useSelectedImage && media?.kind === "image" ? media : null;
+      const imageUrl = sourceImage ? await fileToDataUrl(sourceImage.blob) : undefined;
+      const response = await fetch("/api/generate/video", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          prompt,
+          imageUrl,
+          durationSeconds: videoDurationSeconds,
+          aspectRatio: project.ratio,
+        }),
+      });
+      const payload = (await response.json()) as {
+        artifact?: ProviderArtifact;
+        prompt?: string;
+        sourceMode?: "text-to-video" | "image-to-video";
+        estimatedCost?: number | null;
+        createdAt?: number;
+        error?: string;
+      };
+      if (!response.ok || !payload.artifact) {
+        throw new Error(payload.error || "Video generation failed.");
+      }
+
+      const artifact = payload.artifact;
+      const assetResponse = await fetch(artifact.url);
+      const blob = await assetResponse.blob();
+      const normalizedBlob =
+        blob.type === artifact.mimeType
+          ? blob
+          : blob.slice(0, blob.size, artifact.mimeType);
+      const url = createObjectUrl(normalizedBlob);
+      const detectedDuration = await probeMediaDuration(url, "video");
+      const item: MediaItem = {
+        id: crypto.randomUUID(),
+        kind: "video",
+        url,
+        name: `ai-${payload.sourceMode ?? "video"}-${Date.now()}.webm`,
+        type: artifact.mimeType,
+        blob: normalizedBlob,
+        duration: detectedDuration,
+        generation: {
+          provider: artifact.provider,
+          model: artifact.model,
+          prompt: payload.prompt ?? prompt,
+          createdAt: payload.createdAt ?? Date.now(),
+          estimatedCost: payload.estimatedCost ?? null,
+          operation: useSelectedImage ? "image_to_video" : "video_generate",
+          sourceAssetId: sourceImage?.id,
+          requestedAspectRatio: project.ratio,
+          requestedDurationSeconds: videoDurationSeconds,
+        },
+      };
+
+      setMediaItems((current) => [...current, item]);
+      setMedia(item);
+      setDuration(detectedDuration);
+      setVideoGenerationState("idle");
+    } catch (error) {
+      setVideoGenerationState("error");
+      setVideoGenerationError(
+        error instanceof Error ? error.message : "Unable to generate video."
+      );
+    }
+  }
+
+  async function generateVoiceover() {
+    const text = voiceText.trim();
+    if (!text) {
+      setVoiceGenerationState("error");
+      setVoiceGenerationError("Write voiceover text first.");
+      return;
+    }
+
+    try {
+      setVoiceGenerationState("generating");
+      setVoiceGenerationError(null);
+      const response = await fetch("/api/generate/voice", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          text,
+          language: voiceLanguage,
+          voice: "default",
+        }),
+      });
+      const payload = (await response.json()) as {
+        artifact?: ProviderArtifact;
+        text?: string;
+        voice?: string;
+        language?: string;
+        estimatedCost?: number | null;
+        createdAt?: number;
+        error?: string;
+      };
+      if (!response.ok || !payload.artifact) {
+        throw new Error(payload.error || "Voice generation failed.");
+      }
+
+      const artifact = payload.artifact;
+      const assetResponse = await fetch(artifact.url);
+      const blob = await assetResponse.blob();
+      const normalizedBlob =
+        blob.type === artifact.mimeType
+          ? blob
+          : blob.slice(0, blob.size, artifact.mimeType);
+      const url = createObjectUrl(normalizedBlob);
+      const audioDuration = await probeAudioDuration(url);
+      const startTime =
+        timeline.duration > 0
+          ? Math.max(0, Math.min(timeline.playhead, timeline.duration - 0.1))
+          : 0;
+      const usableDuration =
+        timeline.duration > 0
+          ? Math.min(audioDuration, Math.max(0.1, timeline.duration - startTime))
+          : audioDuration;
+
+      setAudioTrack({
+        id: crypto.randomUUID(),
+        url,
+        name: `ai-voiceover-${Date.now()}.wav`,
+        type: artifact.mimeType,
+        blob: normalizedBlob,
+        duration: usableDuration,
+        startTime,
+        gain: 1,
+        fadeIn: 0,
+        fadeOut: 0,
+        duckingEnabled: false,
+        duckingGain: 0.3,
+        generation: {
+          provider: artifact.provider,
+          model: artifact.model,
+          prompt: payload.text ?? text,
+          createdAt: payload.createdAt ?? Date.now(),
+          estimatedCost: payload.estimatedCost ?? null,
+          operation: "voice_synthesize",
+          language: payload.language ?? voiceLanguage,
+          voice: payload.voice ?? "default",
+        },
+      });
+      setVoiceGenerationState("idle");
+    } catch (error) {
+      setVoiceGenerationState("error");
+      setVoiceGenerationError(
+        error instanceof Error ? error.message : "Unable to generate voiceover."
       );
     }
   }
@@ -3310,6 +3485,95 @@ export default function PhaseOneEditor() {
             {imageToolError && <p className="providerError">{imageToolError}</p>}
           </div>
 
+          <h2>AI Video</h2>
+          <div className="avGenerationPanel" data-testid="video-generation-panel">
+            <label>
+              Video prompt
+              <textarea
+                aria-label="Video prompt"
+                value={videoPrompt}
+                placeholder="Describe the shot, movement and mood…"
+                onChange={(e) => setVideoPrompt(e.target.value)}
+              />
+            </label>
+            <label>
+              Duration seconds
+              <input
+                aria-label="Video duration"
+                type="number"
+                min={1}
+                max={30}
+                value={videoDurationSeconds}
+                onChange={(e) =>
+                  setVideoDurationSeconds(
+                    Math.max(1, Math.min(30, Number(e.target.value) || 1))
+                  )
+                }
+              />
+            </label>
+            <div className="imageToolGrid">
+              <button
+                type="button"
+                className="toolButton"
+                disabled={videoGenerationState === "generating" || providerState !== "ready"}
+                onClick={() => void generateVideoAsset(false)}
+              >
+                Text → Video
+              </button>
+              <button
+                type="button"
+                className="toolButton"
+                disabled={
+                  videoGenerationState === "generating" ||
+                  providerState !== "ready" ||
+                  media?.kind !== "image"
+                }
+                onClick={() => void generateVideoAsset(true)}
+              >
+                Image → Video
+              </button>
+            </div>
+            {videoGenerationState === "generating" && <small>Generating video asset…</small>}
+            {videoGenerationError && <p className="providerError">{videoGenerationError}</p>}
+          </div>
+
+          <h2>AI Voiceover</h2>
+          <div className="avGenerationPanel" data-testid="voice-generation-panel">
+            <label>
+              Script
+              <textarea
+                aria-label="Voiceover text"
+                value={voiceText}
+                placeholder="اكتب نص التعليق الصوتي أو voiceover script…"
+                onChange={(e) => setVoiceText(e.target.value)}
+              />
+            </label>
+            <label>
+              Language
+              <select
+                aria-label="Voiceover language"
+                value={voiceLanguage}
+                onChange={(e) =>
+                  setVoiceLanguage(e.target.value as "auto" | "ar" | "en")
+                }
+              >
+                <option value="auto">Auto</option>
+                <option value="ar">Arabic</option>
+                <option value="en">English</option>
+              </select>
+            </label>
+            <button
+              type="button"
+              className="toolButton"
+              disabled={voiceGenerationState === "generating" || providerState !== "ready"}
+              onClick={() => void generateVoiceover()}
+            >
+              {voiceGenerationState === "generating" ? "Generating voice…" : "Generate voiceover"}
+            </button>
+            <small>Generated voiceover becomes the editable Audio Track.</small>
+            {voiceGenerationError && <p className="providerError">{voiceGenerationError}</p>}
+          </div>
+
           <h2>Brand Kit</h2>
           <div className="brandKitPanel" data-testid="brand-kit">
             <div className="brandKitHeader">
@@ -4331,6 +4595,11 @@ export default function PhaseOneEditor() {
                 <strong>{audioTrack.name}</strong>
                 <span>audio</span>
               </div>
+              {audioTrack.generation && (
+                <small className="assetGeneration" data-testid="audio-generation-meta">
+                  AI · {audioTrack.generation.provider} · {audioTrack.generation.model} · {audioTrack.generation.operation}
+                </small>
+              )}
               <label>
                 Start
                 <input

@@ -1223,3 +1223,37 @@ test("P4 image tools create non-destructive edit background and outpaint variant
   await expect(page.getByTestId("asset-generation-meta").nth(2)).toContainText("background");
   await expect(page.getByTestId("asset-generation-meta").nth(3)).toContainText("outpaint");
 });
+
+test("P4 generates text video image video and voiceover as editable persisted assets", async ({ page }) => {
+  await page.goto("/");
+
+  await page.getByLabel("Image prompt").fill("Modern UAE real estate lobby");
+  await page.getByRole("button", { name: "Generate image" }).click();
+  await expect(page.locator(".assetCard")).toHaveCount(1);
+
+  await page.getByLabel("Video prompt").fill("Slow cinematic camera push with premium lighting");
+  await page.getByLabel("Video duration").fill("6");
+  await page.getByRole("button", { name: "Image → Video" }).click();
+  await expect(page.locator(".assetCard")).toHaveCount(2);
+  await expect(page.getByTestId("asset-generation-meta").nth(1)).toContainText("image_to_video");
+
+  await page.getByRole("button", { name: "Text → Video" }).click();
+  await expect(page.locator(".assetCard")).toHaveCount(3);
+  await expect(page.getByTestId("asset-generation-meta").nth(2)).toContainText("video_generate");
+
+  await page.getByLabel("Voiceover text").fill("اكتشف مشروعك القادم مع نمدار");
+  await page.getByLabel("Voiceover language").selectOption("ar");
+  await page.getByRole("button", { name: "Generate voiceover" }).click();
+
+  await expect(page.getByTestId("audio-inspector")).toBeVisible();
+  await expect(page.getByTestId("audio-generation-meta")).toContainText("voice_synthesize");
+  await expect(page.getByTestId("audio-generation-meta")).toContainText("mock-voice");
+
+  await expect(page.getByTestId("save-state")).toHaveText("Saved", { timeout: 5_000 });
+  await page.reload();
+
+  await expect(page.locator(".assetCard")).toHaveCount(3);
+  await expect(page.getByTestId("asset-generation-meta").nth(1)).toContainText("image_to_video");
+  await expect(page.getByTestId("asset-generation-meta").nth(2)).toContainText("video_generate");
+  await expect(page.getByTestId("audio-generation-meta")).toContainText("voice_synthesize");
+});

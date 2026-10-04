@@ -244,3 +244,7 @@ h2 { font-size:12px; text-transform:uppercase; letter-spacing:.1em; color:var(--
 .imageToolGrid, .outpaintGrid { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
 .outpaintGrid button { border:1px solid var(--line); border-radius:8px; padding:7px; background:var(--surface-2); color:var(--text); font-size:10px; }
 .imageToolPanel small { color:var(--muted); font-size:10px; }
+
+.avGenerationPanel { display:flex; flex-direction:column; gap:8px; padding:10px; border:1px solid rgba(22,139,241,.18); border-radius:11px; background:rgba(255,255,255,.018); }
+.avGenerationPanel textarea { min-height:74px; resize:vertical; }
+.avGenerationPanel small { color:var(--muted); font-size:10px; line-height:1.35; }

@@ -39,6 +39,7 @@ export type PersistableAudioTrack = {
   fadeOut: number;
   duckingEnabled: boolean;
   duckingGain: number;
+  generation?: AssetGenerationMetadata;
   blob: Blob;
 };
 
