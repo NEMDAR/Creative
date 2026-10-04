@@ -12,6 +12,7 @@ import { useEffect, type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
 import { LanguageProvider } from "../features/nemdar/language";
+import { StudioServicesProvider } from "../features/nemdar/service-context";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 
 function NotFoundComponent() {
@@ -123,7 +124,7 @@ function RootComponent() {
   return (
     <QueryClientProvider client={queryClient}>
       {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
-      <LanguageProvider><Outlet /></LanguageProvider>
+      <StudioServicesProvider><LanguageProvider><Outlet /></LanguageProvider></StudioServicesProvider>
     </QueryClientProvider>
   );
 }

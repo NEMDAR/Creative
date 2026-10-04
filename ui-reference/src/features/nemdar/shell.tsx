@@ -4,7 +4,7 @@ import { Bell, CalendarDays, ChartNoAxesCombined, ChevronDown, CircleHelp, Comma
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { projects } from './data';
+import { useStudioData } from './service-context';
 import { LanguageSwitch, useLanguage } from './language';
 
 export const nav = [
@@ -26,6 +26,7 @@ export function SectionHead({ title, action, to }: { title: string; action?: str
 export function PageHeader({ eyebrow, title, description, action }: { eyebrow?: string; title: string; description?: string; action?: ReactNode }) { return <header className="mb-7 grid grid-cols-[minmax(0,1fr)_auto] items-end gap-4"><div className="min-w-0">{eyebrow && <p className="mb-1.5 text-[11px] font-bold uppercase text-primary">{eyebrow}</p>}<h1 className="font-display text-[27px] font-extrabold leading-tight text-foreground sm:text-[30px]">{title}</h1>{description && <p className="mt-1.5 text-sm text-muted-foreground">{description}</p>}</div>{action}</header>; }
 export function AppShell({ children }: { children: ReactNode }) {
  const path = useRouterState({ select: s => s.location.pathname });
+ const { projects } = useStudioData();
  const { language } = useLanguage();
  const ar = language === 'ar';
  const labels: Record<string,string> = { Home:'الرئيسية', Projects:'المشاريع', 'Campaign Studio':'استوديو الحملات', Assets:'الأصول', 'Brand Kit':'هوية العلامة', Publishing:'النشر', Calendar:'التقويم', Analytics:'التحليلات', Operations:'العمليات', Settings:'الإعدادات' };
