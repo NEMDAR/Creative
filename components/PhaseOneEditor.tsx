@@ -4711,7 +4711,7 @@ export default function PhaseOneEditor({ initialWorkspace = "editor", legacyLayo
         )}
       </section>
 
-      {workspaceView === "campaign" && (
+      {(legacyLayout || workspaceView === "campaign") && (
       <section className="marketingStudio" data-testid="marketing-brief">
         <div className="marketingStudioHeader">
           <div>
@@ -4918,7 +4918,7 @@ export default function PhaseOneEditor({ initialWorkspace = "editor", legacyLayo
             </nav>
           )}
           <div className="toolPanelContent">
-          {workspaceView === "batch" && (<>
+          {(legacyLayout || workspaceView === "batch") && (<>
           <h2>Batch Generation</h2>
           <div className="batchPanel" data-testid="batch-panel">
             <div className="batchHeader">
@@ -5012,7 +5012,7 @@ export default function PhaseOneEditor({ initialWorkspace = "editor", legacyLayo
           </div>
           </>)}
 
-          {workspaceView === "publishing" && (<>
+          {(legacyLayout || workspaceView === "publishing") && (<>
           <h2>Publishing & Calendar</h2>
           <div className="publishingPanel" data-testid="publishing-panel">
             <div className="publishingHeader">
@@ -5164,16 +5164,23 @@ export default function PhaseOneEditor({ initialWorkspace = "editor", legacyLayo
               </div>
             ))}
           </div>
-          <label className="toolButton fileButton">+ Logo / image<input type="file" accept="image/*" onChange={addLogo} hidden /></label>
+          {!legacyLayout && <label className="toolButton fileButton">+ Logo / image<input type="file" accept="image/*" onChange={addLogo} hidden /></label>}
           </>)}
 
-          {workspaceView === "editor" && (legacyLayout || editorTool === "text") && (<>
-            <h2>Text</h2>
+          {legacyLayout && workspaceView === "editor" && (<>
+            <h2>Elements</h2>
             <button className="toolButton" onClick={addText}>+ Text</button>
+            <label className="toolButton fileButton">+ Logo / image<input type="file" accept="image/*" onChange={addLogo} hidden /></label>
+            <label className="toolButton fileButton">+ Music / audio<input type="file" accept="audio/*" onChange={onAudioUpload} hidden /></label>
+          </>)}
+
+          {!legacyLayout && workspaceView === "editor" && editorTool === "text" && (<>
+            <h2>Text</h2>
+            <button className="toolButton" onClick={addText}>+ Add text layer</button>
             <p className="hint">Select a text layer on the canvas to edit typography, timing and motion.</p>
           </>)}
 
-          {workspaceView === "editor" && (legacyLayout || editorTool === "audio") && (<>
+          {!legacyLayout && workspaceView === "editor" && editorTool === "audio" && (<>
             <h2>Audio</h2>
             <label className="toolButton fileButton">+ Music / audio<input type="file" accept="audio/*" onChange={onAudioUpload} hidden /></label>
             <p className="hint">{audioTrack ? `Selected: ${audioTrack.name}` : "Add music, voiceover or SFX. Mixing controls appear in the inspector."}</p>
